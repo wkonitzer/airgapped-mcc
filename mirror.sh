@@ -127,7 +127,7 @@ setup_aptmirror() {
 
   # Downloading the specified version of apt-mirror
   echo "Updating apt-mirror..."
-  apt_mirror_url="https://raw.githubusercontent.com/apt-mirror/apt-mirror/2ef8e73f700c0989f7f8e4347fbf76cf3b8ce132/apt-mirror"
+  apt_mirror_url="https://raw.githubusercontent.com/wkonitzer/apt-mirror/master/apt-mirror"
   if wget -O /tmp/apt-mirror "$apt_mirror_url"; then
     # Replace the existing apt-mirror binary
     if mv /tmp/apt-mirror /usr/bin/apt-mirror; then
@@ -145,10 +145,11 @@ setup_aptmirror() {
 
 setup_aptmirror_config() {
   local cluster_release=$1
-  local yaml_url="https://binary-mirantis-com.s3.amazonaws.com/releases/cluster/${cluster_release}.yaml"
+  local yaml_url="https://binary.mirantis.com/releases/cluster/${cluster_release}.yaml"
   local yaml_file="/tmp/${cluster_release}.yaml"
   local repo_value
   local mirror_list_file="/etc/apt/mirror.list"
+  local version_number
 
   # Download the YAML file
   echo "Downloading YAML file for cluster release ${cluster_release}..."
@@ -168,6 +169,9 @@ setup_aptmirror_config() {
   # Remove the "kaas/" prefix if present
   repo_value=${repo_value#kaas/}
 
+  # Extract version number for the Mirantis repository
+  version_number=$(grep 'mcr:' "$yaml_file" | awk '{print $2}' | cut -d '.' -f1-2)  
+
   # Create apt-mirror config
   echo "Creating apt-mirror configuration..."
   cat > "$mirror_list_file" <<- EOM
@@ -177,6 +181,7 @@ set base_path    /images/apt-mirror
 #
 set nthreads     20
 set _tilde 0
+set use_acquire_by_hash no
 #
 ############# end config ##############
 
@@ -184,6 +189,16 @@ deb [arch=amd64] https://mirror.mirantis.com/kaas/$repo_value focal main restric
 deb [arch=amd64] https://mirror.mirantis.com/kaas/$repo_value focal-updates main restricted universe
 deb [arch=amd64] https://mirror.mirantis.com/kaas/$repo_value focal-security main restricted universe
 clean https://mirror.mirantis.com/kaas/$repo_value
+
+# Additional repositories
+deb https://mirror.mirantis.com/kaas/kubernetes-extra-0.0.9/focal focal main
+clean https://mirror.mirantis.com/kaas/kubernetes-extra-0.0.9/focal
+
+deb https://deb.nodesource.com/node_20.x nodistro main
+clean https://deb.nodesource.com/node_20.x
+
+deb [arch=amd64] https://repos.mirantis.com/ubuntu focal stable-$version_number
+clean https://repos.mirantis.com/ubuntu
 EOM
 
   echo "apt-mirror configuration created at $mirror_list_file"
@@ -429,13 +444,59 @@ download_additional_keys() {
     done
 }
 
+download_and_execute_scripts() {
+    # Define the directory where the files will be downloaded
+    download_dir="/images"
+    mkdir -p "$download_dir"
 
+    # File URLs to download
+    declare -A files=(
+        ["download.py"]="https://raw.githubusercontent.com/wkonitzer/airgapped-mcc/main/download.py"
+        ["pull_images.sh"]="https://raw.githubusercontent.com/wkonitzer/airgapped-mcc/main/pull_images.sh"
+        ["push_images.sh"]="https://raw.githubusercontent.com/wkonitzer/airgapped-mcc/main/push_images.sh"
+    )
 
+    # Download the files
+    for file in "${!files[@]}"; do
+        wget "${files[$file]}" -O "$download_dir/$file" && chmod +x "$download_dir/$file"
+    done
 
+    # Run download.py and pull_images.sh in parallel
+    echo "Starting download.py and pull_images.sh in parallel..."
+    python3 "$download_dir/download.py" &>/tmp/download_py.log &
+    bash "$download_dir/pull_images.sh" &>/tmp/pull_images_sh.log &
 
+    # Run apt-mirror
+    echo "Starting apt-mirror..."
+    /usr/bin/apt-mirror &>/tmp/apt_mirror.log &
 
+    # Spinner for pull_images.sh
+    echo "Waiting for pull_images.sh to complete..."
+    spinner="/|\\-/|\\-"
+    while kill -0 $! 2>/dev/null; do
+        for i in `seq 0 7`; do
+            printf "\r${spinner:$i:1}"
+            sleep .1
+        done
+    done
+    printf "\r"
 
+    # Once pull_images.sh is completed, run push_images.sh
+    echo "Starting push_images.sh..."
+    bash "$download_dir/push_images.sh" &>/tmp/push_images_sh.log &
 
+    # Spinner for push_images.sh
+    echo "Waiting for push_images.sh to complete..."
+    while kill -0 $! 2>/dev/null; do
+        for i in `seq 0 7`; do
+            printf "\r${spinner:$i:1}"
+            sleep .1
+        done
+    done
+    printf "\r"
+    
+    echo "Script execution completed."
+}
 
 
 # Calling the create_lv function
@@ -465,3 +526,7 @@ setup_azure_cli
 
 # Download additional keys
 download_additional_keys
+
+echo "Setup complete.. starting mirror creation"
+
+download_and_execute_scripts
