@@ -28,7 +28,7 @@ driver = webdriver.Chrome(options=options)
 wait = WebDriverWait(driver, 10)
 
 def download_url(url, local_path):
-    logger.info(f"Attempting to download {url} to {local_path}")
+    logger.debug(f"Examining {url}")
     try:
         response = requests.head(url)  # Using HEAD request to get the headers without downloading the file
         if response.status_code == 200:
@@ -40,6 +40,7 @@ def download_url(url, local_path):
                 return
             
             # Download the file if it doesn’t exist or sizes don’t match
+            logger.info(f"Attempting to download {url} to {local_path}")
             response = requests.get(url, stream=True)
             response.raise_for_status()
             
@@ -89,29 +90,28 @@ def process_url(url, local_path):
                 
                 should_skip = False  # Flag to determine whether to skip processing the next URL
                 
-                # Extracting the creation date from adjacent text node
-                sibling = link.next_sibling
-                while sibling and not isinstance(sibling, str):
-                    sibling = sibling.next_sibling
-                
+                 # Extracting the creation date from the preceding text node
+                sibling = link.find_previous_sibling(text=True)
+
                 if sibling:
-                    split_content = sibling.split()
-                    if split_content:
-                        date_str = split_content[0]
-                        logger.debug(f"Adjacent text to {href}: {date_str}")
-                        
-                        # If the adjacent text looks like a date string, try to parse it
-                        if re.match(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}Z', date_str):
-                            try:
-                                date_obj = datetime.datetime.strptime(date_str, '%Y-%m-%dT%H:%M:%S.%fZ')
-                                if date_obj.year < 2023:
-                                    logger.debug(f"File created before 2023, skipping download: {date_str}")
-                                    should_skip = True
-                            except ValueError as ve:
-                                logger.debug(f"Unable to parse date string {date_str}: {str(ve)}")
+                    # Stripping leading and trailing whitespace characters
+                    date_str = sibling.strip()
+                    date_str = sibling.strip().split()[0]  # Take only the first part of the string
+                    logger.debug(f"Preceding text to {href}: {date_str}")
+
+
+                    # If the adjacent text looks like a date string, try to parse it
+                    if re.match(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}Z', date_str):
+                        try:
+                            date_obj = datetime.datetime.strptime(date_str, '%Y-%m-%dT%H:%M:%S.%fZ')
+                            if date_obj.year < 2023:
+                                logger.debug(f"File created before 2023, skipping download: {date_str}")
+                                should_skip = True
+                        except ValueError as ve:
+                            logger.debug(f"Unable to parse date string {date_str}: {str(ve)}")
                 
                 if href.endswith('/') or href.startswith('?prefix='):
-                    logger.info(f"Preparing to create directory: {next_local_path}")
+                    logger.debug(f"Preparing to create directory: {next_local_path}")
                     os.makedirs(next_local_path, exist_ok=True)
                     logger.debug(f"Identified as directory. Created directory {next_local_path}")
                     process_url(next_url, next_local_path)
@@ -132,4 +132,3 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         logger.error("Interrupted by user. Exiting...")
         sys.exit(1)
-
