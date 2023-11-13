@@ -36,7 +36,8 @@ for REPO in $REPOSITORIES; do
         TAG=$(_jq '.tags[0]')  # Assuming one tag per manifest
         YEAR=$(echo $TIMESTAMP | cut -d '-' -f 1)
 
-        if [[ $YEAR -ge 2023 ]]; then
+        # Check if the repository is lcm/socat or the year is greater or equal to 2023
+        if [[ $REPO == "lcm/socat" ]] || [[ $YEAR -ge 2023 ]]; then
             IMAGE_NAME="$REGISTRY_NAME.azurecr.io/$REPO:$TAG"
 
             # Call pull_image in background

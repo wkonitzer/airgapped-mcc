@@ -2,7 +2,7 @@
 
 # Variables
 REGISTRY="mirantis.azurecr.io"
-PARALLEL_UPLOADS=1  # Number of parallel uploads
+PARALLEL_UPLOADS=5  # Number of parallel uploads
 
 # Function to push the image
 push_image() {
