@@ -18,6 +18,18 @@ pull_image() {
     docker pull $IMAGE_NAME
 }
 
+# Define an array of specific repositories to always pull
+SPECIFIC_REPOS=("lcm/socat" "openstack/extra/kubernetes-entrypoint" "stacklight/configmap-reload" "general/mariadb")
+
+# Function to check if an array contains a specific value
+containsElement () {
+  local element
+  for element in "${@:2}"; do
+    [[ "$element" == "$1" ]] && return 0
+  done
+  return 1
+}
+
 # Initialize counter
 counter=0
 
@@ -36,8 +48,8 @@ for REPO in $REPOSITORIES; do
         TAG=$(_jq '.tags[0]')  # Assuming one tag per manifest
         YEAR=$(echo $TIMESTAMP | cut -d '-' -f 1)
 
-        # Check if the repository is lcm/socat or the year is greater or equal to 2023
-        if [[ $REPO == "lcm/socat" ]] || [[ $YEAR -ge 2023 ]]; then
+        # Check if the repository is in the list of specific repos or the year is greater or equal to 2023
+        if containsElement "$REPO" "${SPECIFIC_REPOS[@]}" || [[ $YEAR -ge 2023 ]]; then
             IMAGE_NAME="$REGISTRY_NAME.azurecr.io/$REPO:$TAG"
 
             # Call pull_image in background

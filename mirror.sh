@@ -298,7 +298,7 @@ server {
     server_name mirantis.azurecr.io;
 
     # Increase the client body size limit to handle large Docker image layers
-    client_max_body_size 500M;
+    client_max_body_size 1000M;
 
     # SSL configuration
     ssl_certificate /images/certs/mirantis.azurecr.io.crt;
