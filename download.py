@@ -19,6 +19,9 @@ base_url = "https://binary.mirantis.com/"
 output_dir = "/images/binaries"
 processed_urls = set()
 
+# List of prefixes to ignore the 2023 check
+ignore_date_check_prefixes = ["stacklight/helm/"]
+
 # Configure the WebDriver
 options = webdriver.ChromeOptions()
 options.add_argument('--headless')
@@ -87,28 +90,33 @@ def process_url(url, local_path):
                 if next_url == url:
                     logger.debug(f"Skipping self reference: {next_url}")
                     continue
-                
+
+                # Check if URL contains any of the specified prefixes
+                ignore_date_check = any(prefix in next_url for prefix in ignore_date_check_prefixes)
+
+
                 should_skip = False  # Flag to determine whether to skip processing the next URL
-                
-                 # Extracting the creation date from the preceding text node
-                sibling = link.find_previous_sibling(text=True)
 
-                if sibling:
-                    # Stripping leading and trailing whitespace characters
-                    date_str = sibling.strip()
-                    date_str = sibling.strip().split()[0]  # Take only the first part of the string
-                    logger.debug(f"Preceding text to {href}: {date_str}")
+                if not ignore_date_check:                
+                    # Extracting the creation date from the preceding text node
+                    sibling = link.find_previous_sibling(text=True)
+
+                    if sibling:
+                        # Stripping leading and trailing whitespace characters
+                        date_str = sibling.strip()
+                        date_str = sibling.strip().split()[0]  # Take only the first part of the string
+                        logger.debug(f"Preceding text to {href}: {date_str}")
 
 
-                    # If the adjacent text looks like a date string, try to parse it
-                    if re.match(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}Z', date_str):
-                        try:
-                            date_obj = datetime.datetime.strptime(date_str, '%Y-%m-%dT%H:%M:%S.%fZ')
-                            if date_obj.year < 2023:
-                                logger.debug(f"File created before 2023, skipping download: {date_str}")
-                                should_skip = True
-                        except ValueError as ve:
-                            logger.debug(f"Unable to parse date string {date_str}: {str(ve)}")
+                        # If the adjacent text looks like a date string, try to parse it
+                        if re.match(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}Z', date_str):
+                            try:
+                                date_obj = datetime.datetime.strptime(date_str, '%Y-%m-%dT%H:%M:%S.%fZ')
+                                if date_obj.year < 2023:
+                                    logger.debug(f"File created before 2023, skipping download: {date_str}")
+                                    should_skip = True
+                            except ValueError as ve:
+                                logger.debug(f"Unable to parse date string {date_str}: {str(ve)}")
                 
                 if href.endswith('/') or href.startswith('?prefix='):
                     logger.debug(f"Preparing to create directory: {next_local_path}")

@@ -19,7 +19,13 @@ pull_image() {
 }
 
 # Define an array of specific repositories to always pull
-SPECIFIC_REPOS=("lcm/socat" "openstack/extra/kubernetes-entrypoint" "stacklight/configmap-reload" "general/mariadb")
+SPECIFIC_REPOS=("lcm/socat" 
+                "openstack/extra/kubernetes-entrypoint"
+                "stacklight/configmap-reload" 
+                "general/mariadb"
+                "stacklight/mysqld-exporter"
+                "openstack/extra/defaultbackend"
+                "openstack/extra/coredns")
 
 # Function to check if an array contains a specific value
 containsElement () {
