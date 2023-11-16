@@ -179,6 +179,9 @@ setup_aptmirror_config() {
 #
 set base_path    /images/apt-mirror
 #
+set var_path     $base_path/var
+set postmirror_script $var_path/postmirror.sh
+set run_postmirror 1
 set nthreads     20
 set _tilde 0
 set use_acquire_by_hash no
@@ -202,6 +205,32 @@ clean https://repos.mirantis.com/ubuntu
 EOM
 
   echo "apt-mirror configuration created at $mirror_list_file"
+
+  # Create the directory for postmirror.sh if it doesn't exist
+  echo "Creating directory for postmirror.sh..."
+  local postmirror_dir="/images/apt-mirror/var"
+  mkdir -p "$postmirror_dir"
+
+  # Create postmirror.sh with the specified content and make it executable
+  local postmirror_script="${postmirror_dir}/postmirror.sh"
+  echo "Creating and setting execute permission for postmirror.sh..."
+  cat > "$postmirror_script" <<- 'EOM'
+#!/bin/bash
+
+# Create the directory for the first key if it does not exist and download the key
+mkdir -p /images/apt-mirror/mirror/mirror.mirantis.com/kaas/kubernetes-extra-0.0.9/focal
+wget -q -O /images/apt-mirror/mirror/mirror.mirantis.com/kaas/kubernetes-extra-0.0.9/focal/archive-kubernetes-extra-0.0.9.key https://mirror.mirantis.com/kaas/kubernetes-extra-0.0.9/focal/archive-kubernetes-extra-0.0.9.key
+
+# Download the second key
+wget -q -O /images/apt-mirror/mirror/repos.mirantis.com/ubuntu/gpg https://repos.mirantis.com/ubuntu/gpg
+
+# Create the directory for the third key if it does not exist and download the key
+mkdir -p /images/apt-mirror/mirror/deb.nodesource.com/gpgkey
+wget -q -O /images/apt-mirror/mirror/deb.nodesource.com/gpgkey/nodesource-repo.gpg.key https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key
+EOM
+  chmod +x "$postmirror_script"
+
+  echo "postmirror.sh script created and made executable at $postmirror_script"
 }
 
 create_certificates() {
@@ -223,7 +252,7 @@ create_certificates() {
     fi
 
     # Extract domains from config file
-    domains=$(grep 'address=/' "$config_file" | cut -d'/' -f3)
+    domains=$(grep 'address=/' "$config_file" | cut -d'/' -f2)
 
     for domain in $domains; do
         # Generate private key and CSR for each domain
@@ -361,12 +390,15 @@ setup_docker_registry() {
 }
 
 setup_python_extras() {
+    # install pip3
+    apt install python3-pip -y
+
     # Install selenium
     pip3 install selenium
 
     # Download and install Google Chrome
     wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-    dpkg -i google-chrome-stable_current_amd64.deb || apt-get install -f
+    dpkg -i google-chrome-stable_current_amd64.deb || apt-get install -f -y
 
     # Get the version of Chrome
     chrome_version=$(google-chrome --version | awk '{print $3}')
@@ -375,16 +407,17 @@ setup_python_extras() {
     chrome_major_version=$(echo "$chrome_version" | cut -d '.' -f 1)
 
     # Download the corresponding ChromeDriver
-    wget https://chromedriver.storage.googleapis.com/LATEST_RELEASE_$chrome_major_version
+    wget https://googlechromelabs.github.io/chrome-for-testing/LATEST_RELEASE_$chrome_major_version
     chromedriver_version=$(cat LATEST_RELEASE_$chrome_major_version)
-    wget https://chromedriver.storage.googleapis.com/$chromedriver_version/chromedriver_linux64.zip
+    wget https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing/$chromedriver_version/linux64/chromedriver-linux64.zip
 
     # Unzip and move ChromeDriver to /usr/bin/
-    unzip chromedriver_linux64.zip
-    mv chromedriver /usr/bin/
+    apt install unzip -y
+    unzip chromedriver-linux64.zip
+    mv chromedriver-linux64/chromedriver /usr/bin/
 
     # Clean up
-    rm google-chrome-stable_current_amd64.deb chromedriver_linux64.zip LATEST_RELEASE_$chrome_major_version
+    rm google-chrome-stable_current_amd64.deb chromedriver-linux64.zip LATEST_RELEASE_$chrome_major_version
 
     # Install other Python packages
     pip3 install beautifulsoup4
@@ -409,39 +442,6 @@ setup_azure_cli() {
         echo "Azure login failed."
         return 1
     fi
-}
-
-download_additional_keys() {
-    # Key and directory pairs
-    declare -A keys=(
-        ["/images/apt-mirror/mirror/mirror.mirantis.com/kubernetes-extra-0.0.9/focal"]="https://mirror.mirantis.com/kaas/kubernetes-extra-0.0.9/focal/archive-kubernetes-extra-0.0.9.key"
-        ["/images/apt-mirror/mirror/repos.mirantis.com/ubuntu"]="https://repos.mirantis.com/ubuntu/gpg"
-        ["/images/apt-mirror/mirror/deb.nodesource.com/gpgkey"]="https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key"
-    )
-
-    # Iterate over the keys and directories
-    for dir in "${!keys[@]}"; do
-        local key_url="${keys[$dir]}"
-        local filename=$(basename "$key_url")
-
-        # Create the directory if it doesn't exist
-        mkdir -p "$dir"
-
-        # Change to the directory
-        cd "$dir"
-
-        # Download the key
-        echo "Downloading key from $key_url to $dir"
-        wget "$key_url" -O "$filename"
-
-        # Check if the download was successful
-        if [[ -f "$filename" ]]; then
-            echo "Key $filename downloaded successfully to $dir."
-        else
-            echo "Failed to download the key $filename to $dir."
-            return 1
-        fi
-    done
 }
 
 download_and_execute_scripts() {
@@ -523,9 +523,6 @@ setup_python_extras
 
 # Setup Azure CLI
 setup_azure_cli
-
-# Download additional keys
-download_additional_keys
 
 echo "Setup complete.. starting mirror creation"
 
