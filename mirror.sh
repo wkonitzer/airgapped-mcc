@@ -3,6 +3,23 @@
 # Automatically exit on error
 set -e
 
+# Check if the script is running as root or via sudo
+if [[ $EUID -ne 0 ]]; then
+   echo "This script must be run as root. Please use sudo or log in as root."
+   exit 1
+fi
+
+# Check for AZURE_USER and AZURE_PASSWORD environment variables
+if [[ -z "${AZURE_USER}" ]]; then
+    echo "Environment variable AZURE_USER is not set. Please set it and try again."
+    exit 1
+fi
+
+if [[ -z "${AZURE_PASSWORD}" ]]; then
+    echo "Environment variable AZURE_PASSWORD is not set. Please set it and try again."
+    exit 1
+fi
+
 # Check if Logical Volume already exists
 lv_exists() {
   lvdisplay /dev/images/images > /dev/null 2>&1
@@ -427,11 +444,6 @@ setup_azure_cli() {
     # Install azure-cli
     curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
 
-    # Set up environment variables for Azure CLI login
-    # Replace these with your actual Service Principal details or other authentication methods
-    export AZURE_USER="<your_username>"
-    export AZURE_PASSWORD="<your_password>"
-
     # Login to Azure
     az login -u "$AZURE_USER" -p "$AZURE_PASSWORD"
 
@@ -498,6 +510,42 @@ download_and_execute_scripts() {
     echo "Script execution completed."
 }
 
+setup_etc_hosts() {
+  local config_file="/etc/dnsmasq.d/local-mirror.conf"
+
+  echo "Reading domain and IP information from $config_file..."
+
+  # Check if the configuration file exists
+  if [ ! -f "$config_file" ]; then
+    echo "Configuration file $config_file not found. Please check the file path."
+    return 1
+  fi
+
+  echo "Configuring /etc/hosts..."
+
+  while IFS= read -r line; do
+    # Extract the IP address and domain from each line
+    if [[ "$line" =~ address=/(.+)/(.+) ]]; then
+      local domain="${BASH_REMATCH[1]}"
+      local ip="${BASH_REMATCH[2]}"
+
+      # Check and update /etc/hosts
+      if grep -qE "^$ip\s+$domain" /etc/hosts; then
+        echo "$domain already exists with the correct IP in /etc/hosts, skipping..."
+      elif grep -qE "\s+$domain" /etc/hosts; then
+        echo "Updating $domain in /etc/hosts..."
+        sed -i "/\s$domain/c\\$ip $domain" /etc/hosts
+      else
+        echo "Adding $domain to /etc/hosts..."
+        echo "$ip $domain" >> /etc/hosts
+      fi
+    fi
+  done < "$config_file"
+
+  echo "/etc/hosts updated"
+}
+
+
 
 # Calling the create_lv function
 create_lv
@@ -527,3 +575,6 @@ setup_azure_cli
 echo "Setup complete.. starting mirror creation"
 
 download_and_execute_scripts
+
+# modidify /etc/hosts
+setup_etc_hosts
