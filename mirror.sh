@@ -526,7 +526,7 @@ EOF
     local config_file="/etc/tinyproxy/tinyproxy.conf"
     if ! grep -q "^Allow 0.0.0.0/0" "$config_file"; then
         log "Updating tinyproxy configuration..."
-        log "Allow 0.0.0.0/0" >> "$config_file"
+        echo "Allow 0.0.0.0/0" >> "$config_file"
         systemctl restart tinyproxy
     else
         log "tinyproxy configuration already updated."
