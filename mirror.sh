@@ -332,7 +332,7 @@ setup_nginx() {
     apt-get install -y nginx
 
     # Configure nginx for each domain in /etc/dnsmasq.d/local-mirror.conf, except for mirantis.azurecr.io
-    log "" > /etc/nginx/conf.d/mirrors.conf
+    echo "" > /etc/nginx/conf.d/mirrors.conf
     while IFS= read -r line; do
         domain=$(log "$line" | awk -F '/' '{print $2}')
     
@@ -454,7 +454,7 @@ setup_python_extras() {
     chrome_version=$(google-chrome --version | awk '{print $3}')
     
     # Extract the major version
-    chrome_major_version=$(log "$chrome_version" | cut -d '.' -f 1)
+    chrome_major_version=$(echo "$chrome_version" | cut -d '.' -f 1)
 
     # Download the corresponding ChromeDriver
     wget https://googlechromelabs.github.io/chrome-for-testing/LATEST_RELEASE_$chrome_major_version
