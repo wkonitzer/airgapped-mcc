@@ -156,10 +156,10 @@ EOF
     # Update /etc/dnsmasq.conf if not already configured
     if ! grep -q "listen-address=$primary_ip" /etc/dnsmasq.conf; then
         log "Updating /etc/dnsmasq.conf..."
-        log "listen-address=$primary_ip" >> /etc/dnsmasq.conf
+        echo "listen-address=$primary_ip" >> /etc/dnsmasq.conf
     fi
-    if ! grep -q "bind-interfaces" /etc/dnsmasq.conf; then
-        log "bind-interfaces" >> /etc/dnsmasq.conf
+    if ! grep -q "^bind-interfaces" /etc/dnsmasq.conf; then
+        echo "bind-interfaces" >> /etc/dnsmasq.conf
     fi
 
     # Restart dnsmasq to apply changes
