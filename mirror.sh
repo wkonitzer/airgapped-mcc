@@ -9,6 +9,13 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
+# Check if running inside a screen session
+if [ -z "$STY" ]; then
+    echo "This script is not running inside a screen session."
+    echo "Please run this script inside a screen session."
+    exit 1
+fi
+
 # Check for AZURE_USER and AZURE_PASSWORD environment variables
 if [[ -z "${AZURE_USER}" ]]; then
     echo "Environment variable AZURE_USER is not set. Please set it and try again."
@@ -22,100 +29,100 @@ fi
 
 # Check if Logical Volume already exists
 lv_exists() {
-  lvdisplay /dev/images/images > /dev/null 2>&1
+    lvdisplay /dev/images/images > /dev/null 2>&1
 }
 
 # Function to check if a drive is unassigned
 is_drive_unassigned() {
-  local drive=$1
-  local mount_point
-  mount_point=$(lsblk -no MOUNTPOINT "/dev/$drive")
+    local drive=$1
+    local mount_point
+    mount_point=$(lsblk -no MOUNTPOINT "/dev/$drive")
 
-  # If the mount point is empty, the drive is unassigned
-  [[ -z "$mount_point" ]]
+    # If the mount point is empty, the drive is unassigned
+    [[ -z "$mount_point" ]]
 }
 
 # Function to create Logical Volume
 create_lv() {
-  if lv_exists; then
-    echo "Logical Volume 'images' already exists. Skipping creation."
-    return
-  fi
-
-  # Find all unassigned drives
-  unassigned_drives=()
-  for drive in $(lsblk -nd --output NAME | grep -v "^loop"); do
-    if is_drive_unassigned "$drive"; then
-      unassigned_drives+=("/dev/$drive")
+    if lv_exists; then
+        echo "Logical Volume 'images' already exists. Skipping creation."
+        return
     fi
-  done
 
-  # Exit if no unassigned drives found
-  if [ ${#unassigned_drives[@]} -eq 0 ]; then
-    echo "No unassigned drives found."
-    return
-  fi
+    # Find all unassigned drives
+    unassigned_drives=()
+    for drive in $(lsblk -nd --output NAME | grep -v "^loop"); do
+        if is_drive_unassigned "$drive"; then
+            unassigned_drives+=("/dev/$drive")
+        fi
+    done
 
-  echo "Unassigned drives found: ${unassigned_drives[*]}"
+    # Exit if no unassigned drives found
+    if [ ${#unassigned_drives[@]} -eq 0 ]; then
+        echo "No unassigned drives found."
+        return
+    fi
 
-  # Creating Physical Volumes
-  for drive in "${unassigned_drives[@]}"; do
-    echo "Creating Physical Volume on $drive"
-    pvcreate "$drive"
-  done
+    echo "Unassigned drives found: ${unassigned_drives[*]}"
 
-  # Creating a single Volume Group named 'images'
-  echo "Creating Volume Group 'images'"
-  vgcreate images "${unassigned_drives[@]}"
+    # Creating Physical Volumes
+    for drive in "${unassigned_drives[@]}"; do
+        echo "Creating Physical Volume on $drive"
+        pvcreate "$drive"
+    done
 
-  # Creating Logical Volume
-  echo "Creating Logical Volume 'images' in Volume Group 'images'"
-  lvcreate -l 100%FREE -n images images
+    # Creating a single Volume Group named 'images'
+    echo "Creating Volume Group 'images'"
+    vgcreate images "${unassigned_drives[@]}"
 
-  # Formatting and Mounting the Logical Volume
-  echo "Formatting the Logical Volume with ext4"
-  mkfs.ext4 /dev/images/images
+    # Creating Logical Volume
+    echo "Creating Logical Volume 'images' in Volume Group 'images'"
+    lvcreate -l 100%FREE -n images images
 
-  # Making mount directory and mounting the volume
-  echo "Mounting the Logical Volume"
-  mkdir -p /images
-  mount /dev/images/images /images/
+    # Formatting and Mounting the Logical Volume
+    echo "Formatting the Logical Volume with ext4"
+    mkfs.ext4 /dev/images/images
 
-  # Adding entry to fstab, checking if not already present
-  if ! grep -qs '/dev/images/images /images ' /etc/fstab ; then
-    echo "/dev/images/images /images ext4 defaults 0 2" >> /etc/fstab
-    echo "fstab entry added for /images"
-  else
-    echo "fstab entry for /images already exists. Skipping addition."
-  fi
+    # Making mount directory and mounting the volume
+    echo "Mounting the Logical Volume"
+    mkdir -p /images
+    mount /dev/images/images /images/
 
-  echo "Logical Volume 'images' created and mounted at /images"
+    # Adding entry to fstab, checking if not already present
+    if ! grep -qs '/dev/images/images /images ' /etc/fstab ; then
+        echo "/dev/images/images /images ext4 defaults 0 2" >> /etc/fstab
+        echo "fstab entry added for /images"
+    else
+        echo "fstab entry for /images already exists. Skipping addition."
+    fi
+
+    echo "Logical Volume 'images' created and mounted at /images"
 }
 
 # Function to setup dnsmasq
 setup_dnsmasq() {
-  # Fetch the primary IP address
-  primary_ip=$(ip route get 1 | awk -F 'src ' '{print $2}' | awk '{print $1}')
+    # Fetch the primary IP address
+    primary_ip=$(ip route get 1 | awk -F 'src ' '{print $2}' | awk '{print $1}')
 
-  echo "Primary IP Address: $primary_ip"
+    echo "Primary IP Address: $primary_ip"
 
-  if [ -z "$primary_ip" ]; then
-    echo "Could not determine the primary IP address. Please check network configuration."
-    return 1
-  fi
+    if [ -z "$primary_ip" ]; then
+        echo "Could not determine the primary IP address. Please check network configuration."
+        return 1
+    fi
 
-  # Check if dnsmasq is installed, install if not
-  if ! command -v dnsmasq >/dev/null 2>&1; then
-    echo "Installing dnsmasq..."
-    apt-get update
-    apt-get install -y dnsmasq
-  else
-    echo "dnsmasq is already installed."
-  fi
+    # Check if dnsmasq is installed, install if not
+    if ! command -v dnsmasq >/dev/null 2>&1; then
+        echo "Installing dnsmasq..."
+        apt-get update
+        apt-get install -y dnsmasq
+    else
+        echo "dnsmasq is already installed."
+    fi
 
-  # Setting up dnsmasq configuration
-  echo "Configuring dnsmasq..."
-  cat > /etc/dnsmasq.d/local-mirror.conf <<EOF
+    # Setting up dnsmasq configuration
+    echo "Configuring dnsmasq..."
+    cat > /etc/dnsmasq.d/local-mirror.conf <<EOF
 address=/binary.mirantis.com/$primary_ip
 address=/mirror.mirantis.com/$primary_ip
 address=/mirantis.azurecr.io/$primary_ip
@@ -123,75 +130,79 @@ address=/repos.mirantis.com/$primary_ip
 address=/deb.nodesource.com/$primary_ip
 EOF
 
-  # Update /etc/dnsmasq.conf
-  echo "Updating /etc/dnsmasq.conf..."
-  echo "listen-address=$primary_ip" >> /etc/dnsmasq.conf
-  echo "bind-interfaces" >> /etc/dnsmasq.conf
+    # Update /etc/dnsmasq.conf if not already configured
+    if ! grep -q "listen-address=$primary_ip" /etc/dnsmasq.conf; then
+        echo "Updating /etc/dnsmasq.conf..."
+        echo "listen-address=$primary_ip" >> /etc/dnsmasq.conf
+    fi
+    if ! grep -q "bind-interfaces" /etc/dnsmasq.conf; then
+        echo "bind-interfaces" >> /etc/dnsmasq.conf
+    fi
 
-  # Restart dnsmasq to apply changes
-  echo "Restarting dnsmasq..."
-  systemctl restart dnsmasq
-  echo "dnsmasq has been configured and restarted."
+    # Restart dnsmasq to apply changes
+    echo "Restarting dnsmasq..."
+    systemctl restart dnsmasq
+    echo "dnsmasq has been configured and restarted."
 }
 
 setup_aptmirror() {
-  # Install apt-mirror
-  echo "Installing apt-mirror..."
-  if ! apt-get update || ! apt-get install -y apt-mirror; then
-    echo "Failed to install apt-mirror. Exiting."
-    exit 1
-  fi
-
-  # Downloading the specified version of apt-mirror
-  echo "Updating apt-mirror..."
-  apt_mirror_url="https://raw.githubusercontent.com/wkonitzer/apt-mirror/master/apt-mirror"
-  if wget -O /tmp/apt-mirror "$apt_mirror_url"; then
-    # Replace the existing apt-mirror binary
-    if mv /tmp/apt-mirror /usr/bin/apt-mirror; then
-      chmod +x /usr/bin/apt-mirror
-      echo "Successfully updated apt-mirror."
-    else
-      echo "Failed to update /usr/bin/apt-mirror. Exiting."
-      exit 1
+    # Install apt-mirror
+    echo "Installing apt-mirror..."
+    if ! apt-get update || ! apt-get install -y apt-mirror; then
+        echo "Failed to install apt-mirror. Exiting."
+        exit 1
     fi
-  else
-    echo "Failed to download the updated apt-mirror script. Exiting."
-    exit 1
-  fi
+
+    # Downloading the specified version of apt-mirror
+    echo "Updating apt-mirror..."
+    apt_mirror_url="https://raw.githubusercontent.com/wkonitzer/apt-mirror/master/apt-mirror"
+    if wget -O /tmp/apt-mirror "$apt_mirror_url"; then
+      # Replace the existing apt-mirror binary
+      if mv /tmp/apt-mirror /usr/bin/apt-mirror; then
+          chmod +x /usr/bin/apt-mirror
+          echo "Successfully updated apt-mirror."
+      else
+          echo "Failed to update /usr/bin/apt-mirror. Exiting."
+          exit 1
+      fi
+    else
+        echo "Failed to download the updated apt-mirror script. Exiting."
+        exit 1
+    fi
 }
 
 setup_aptmirror_config() {
-  local cluster_release=$1
-  local yaml_url="https://binary.mirantis.com/releases/cluster/${cluster_release}.yaml"
-  local yaml_file="/tmp/${cluster_release}.yaml"
-  local repo_value
-  local mirror_list_file="/etc/apt/mirror.list"
-  local version_number
+    local cluster_release=$1
+    local yaml_url="https://binary.mirantis.com/releases/cluster/${cluster_release}.yaml"
+    local yaml_file="/tmp/${cluster_release}.yaml"
+    local repo_value
+    local mirror_list_file="/etc/apt/mirror.list"
+    local version_number
 
-  # Download the YAML file
-  echo "Downloading YAML file for cluster release ${cluster_release}..."
-  if ! wget -O "$yaml_file" "$yaml_url"; then
-    echo "Failed to download YAML file. Exiting."
-    exit 1
-  fi
+    # Download the YAML file
+    echo "Downloading YAML file for cluster release ${cluster_release}..."
+    if ! wget -O "$yaml_file" "$yaml_url"; then
+        echo "Failed to download YAML file. Exiting."
+        exit 1
+    fi
 
-  # Parse YAML file to extract kaas_ubuntu_repo
-  echo "Extracting kaas_ubuntu_repo from YAML file..."
-  repo_value=$(grep 'kaas_ubuntu_repo:' "$yaml_file" | head -n 1 | awk '{print $2}')
-  if [ -z "$repo_value" ]; then
-    echo "kaas_ubuntu_repo could not be extracted. Exiting."
-    exit 1
-  fi
+    # Parse YAML file to extract kaas_ubuntu_repo
+    echo "Extracting kaas_ubuntu_repo from YAML file..."
+    repo_value=$(grep 'kaas_ubuntu_repo:' "$yaml_file" | head -n 1 | awk '{print $2}')
+    if [ -z "$repo_value" ]; then
+        echo "kaas_ubuntu_repo could not be extracted. Exiting."
+        exit 1
+    fi
 
-  # Remove the "kaas/" prefix if present
-  repo_value=${repo_value#kaas/}
+    # Remove the "kaas/" prefix if present
+    repo_value=${repo_value#kaas/}
 
-  # Extract version number for the Mirantis repository
-  version_number=$(grep 'mcr:' "$yaml_file" | awk '{print $2}' | cut -d '.' -f1-2)  
+    # Extract version number for the Mirantis repository
+    version_number=$(grep 'mcr:' "$yaml_file" | awk '{print $2}' | cut -d '.' -f1-2)  
 
-  # Create apt-mirror config
-  echo "Creating apt-mirror configuration..."
-  cat > "$mirror_list_file" <<- EOM
+    # Create apt-mirror config
+    echo "Creating apt-mirror configuration..."
+    cat > "$mirror_list_file" <<- EOM
 ############# config ##################
 #
 set base_path    /images/apt-mirror
@@ -221,17 +232,17 @@ deb [arch=amd64] https://repos.mirantis.com/ubuntu focal stable-$version_number
 clean https://repos.mirantis.com/ubuntu
 EOM
 
-  echo "apt-mirror configuration created at $mirror_list_file"
+    echo "apt-mirror configuration created at $mirror_list_file"
 
-  # Create the directory for postmirror.sh if it doesn't exist
-  echo "Creating directory for postmirror.sh..."
-  local postmirror_dir="/images/apt-mirror/var"
-  mkdir -p "$postmirror_dir"
+    # Create the directory for postmirror.sh if it doesn't exist
+    echo "Creating directory for postmirror.sh..."
+    local postmirror_dir="/images/apt-mirror/var"
+    mkdir -p "$postmirror_dir"
 
-  # Create postmirror.sh with the specified content and make it executable
-  local postmirror_script="${postmirror_dir}/postmirror.sh"
-  echo "Creating and setting execute permission for postmirror.sh..."
-  cat > "$postmirror_script" <<- 'EOM'
+    # Create postmirror.sh with the specified content and make it executable
+    local postmirror_script="${postmirror_dir}/postmirror.sh"
+    echo "Creating and setting execute permission for postmirror.sh..."
+    cat > "$postmirror_script" <<- 'EOM'
 #!/bin/bash
 
 # Create the directory for the first key if it does not exist and download the key
@@ -245,9 +256,9 @@ wget -q -O /images/apt-mirror/mirror/repos.mirantis.com/ubuntu/gpg https://repos
 mkdir -p /images/apt-mirror/mirror/deb.nodesource.com/gpgkey
 wget -q -O /images/apt-mirror/mirror/deb.nodesource.com/gpgkey/nodesource-repo.gpg.key https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key
 EOM
-  chmod +x "$postmirror_script"
+    chmod +x "$postmirror_script"
 
-  echo "postmirror.sh script created and made executable at $postmirror_script"
+    echo "postmirror.sh script created and made executable at $postmirror_script"
 }
 
 create_certificates() {
@@ -294,18 +305,18 @@ EOM
 
 # Function to setup Nginx
 setup_nginx() {
-  # Install nginx
-  apt-get update
-  apt-get install -y nginx
+    # Install nginx
+    apt-get update
+    apt-get install -y nginx
 
-  # Configure nginx for each domain in /etc/dnsmasq.d/local-mirror.conf, except for mirantis.azurecr.io
-  echo "" > /etc/nginx/conf.d/mirrors.conf
-  while IFS= read -r line; do
-    domain=$(echo "$line" | awk -F '/' '{print $2}')
+    # Configure nginx for each domain in /etc/dnsmasq.d/local-mirror.conf, except for mirantis.azurecr.io
+    echo "" > /etc/nginx/conf.d/mirrors.conf
+    while IFS= read -r line; do
+        domain=$(echo "$line" | awk -F '/' '{print $2}')
     
-    # Skip mirantis.azurecr.io
-    if [ "$domain" != "mirantis.azurecr.io" ]; then
-      cat << EOF >> /etc/nginx/conf.d/mirrors.conf
+        # Skip mirantis.azurecr.io
+        if [ "$domain" != "mirantis.azurecr.io" ]; then
+          cat << EOF >> /etc/nginx/conf.d/mirrors.conf
 server {
     listen 443 ssl;
     server_name $domain;
@@ -334,11 +345,11 @@ server {
     return 301 https://\$host\$request_uri;
 }
 EOF
-    fi
-  done < /etc/dnsmasq.d/local-mirror.conf
+        fi
+    done < /etc/dnsmasq.d/local-mirror.conf
 
-  # Add additional server block for Docker registry
-  cat << EOF >> /etc/nginx/conf.d/mirrors.conf
+    # Add additional server block for Docker registry
+    cat << EOF >> /etc/nginx/conf.d/mirrors.conf
 server {
     listen 443 ssl;
     server_name mirantis.azurecr.io;
@@ -361,49 +372,50 @@ server {
         # Ensure large buffers for Docker image layers
         proxy_buffers 32 16k;
         proxy_buffer_size 32k;
-
-        # Other necessary proxy settings...
     }
-
-    # Other settings...
 }
 EOF
 
-  # Test nginx configuration
-  if nginx -t; then
-    # Restart Nginx to apply new configuration
-    systemctl restart nginx
-    echo "Nginx configuration is valid and the service has been restarted."
-  else
-    echo "Error in Nginx configuration. Please check the configuration file."
-    return 1
-  fi
+    # Test nginx configuration
+    if nginx -t; then
+        # Restart Nginx to apply new configuration
+        systemctl restart nginx
+        echo "Nginx configuration is valid and the service has been restarted."
+    else
+        echo "Error in Nginx configuration. Please check the configuration file."
+        return 1
+    fi
 }
 
 # Function to install Docker and setup a local registry
 setup_docker_registry() {
-  # Install Docker and jq
-  apt-get update
-  apt-get install -y docker.io jq
+    # Install Docker and jq
+    apt-get update
+    apt-get install -y docker.io jq
 
-  # Configure Docker to use a custom data directory
-  mkdir -p /etc/docker
-  mkdir -p /images/docker/data/directory
+    # Configure Docker to use a custom data directory
+    mkdir -p /etc/docker
+    mkdir -p /images/docker/data/directory
 
-  # Creating /etc/docker/daemon.json with the custom data directory
-  jq -n --arg dataRoot "/images/docker/data/directory" '{"data-root": $dataRoot}' > /etc/docker/daemon.json
+    # Creating /etc/docker/daemon.json with the custom data directory
+    jq -n --arg dataRoot "/images/docker/data/directory" '{"data-root": $dataRoot}' > /etc/docker/daemon.json
 
-  # Restart Docker to apply new configuration
-  systemctl restart docker
+    # Restart Docker to apply new configuration
+    systemctl restart docker
 
-  # Run a Docker registry container
-  docker run -d \
-    -p 5001:5000 \
-    --restart=always \
-    --name registry \
-    registry:2
+    # Check if the Docker registry container is already running
+    if docker ps -q -f name=^/registry$; then
+        echo "Docker registry container is already running."
+    else
+        echo "Running a Docker registry container..."
+        docker run -d \
+          -p 5001:5000 \
+          --restart=always \
+          --name registry \
+          registry:2
+    fi
 
-  echo "Docker and local registry setup complete."
+    echo "Docker and local registry setup complete."
 }
 
 setup_python_extras() {
@@ -430,7 +442,7 @@ setup_python_extras() {
 
     # Unzip and move ChromeDriver to /usr/bin/
     apt install unzip -y
-    unzip chromedriver-linux64.zip
+    unzip -o chromedriver-linux64.zip
     mv chromedriver-linux64/chromedriver /usr/bin/
 
     # Clean up
@@ -456,16 +468,16 @@ setup_azure_cli() {
     fi
 }
 
-download_and_execute_scripts() {
+# Setup tinyproxy
+
+download_images() {
     # Define the directory where the files will be downloaded
     download_dir="/images"
-    mkdir -p "$download_dir"
 
     # File URLs to download
     declare -A files=(
         ["download.py"]="https://raw.githubusercontent.com/wkonitzer/airgapped-mcc/main/download.py"
         ["pull_images.sh"]="https://raw.githubusercontent.com/wkonitzer/airgapped-mcc/main/pull_images.sh"
-        ["push_images.sh"]="https://raw.githubusercontent.com/wkonitzer/airgapped-mcc/main/push_images.sh"
     )
 
     # Download the files
@@ -473,25 +485,59 @@ download_and_execute_scripts() {
         wget "${files[$file]}" -O "$download_dir/$file" && chmod +x "$download_dir/$file"
     done
 
-    # Run download.py and pull_images.sh in parallel
-    echo "Starting download.py and pull_images.sh in parallel..."
+    # Run download.py, pull_images.sh, and apt-mirror in parallel
+    echo "Starting download.py, pull_images.sh, and apt-mirror in parallel..."
+    
     python3 "$download_dir/download.py" &>/tmp/download_py.log &
+    download_pid=$!  # Capture PID of download.py
+    
     bash "$download_dir/pull_images.sh" &>/tmp/pull_images_sh.log &
-
-    # Run apt-mirror
-    echo "Starting apt-mirror..."
+    pull_images_pid=$!  # Capture PID of pull_images.sh
+    
     /usr/bin/apt-mirror &>/tmp/apt_mirror.log &
+    apt_mirror_pid=$!  # Capture PID of apt-mirror
 
-    # Spinner for pull_images.sh
-    echo "Waiting for pull_images.sh to complete..."
+    # Spinner for all processes
+    echo "Waiting for all images to download..."
     spinner="/|\\-/|\\-"
-    while kill -0 $! 2>/dev/null; do
-        for i in `seq 0 7`; do
+    while kill -0 $download_pid 2>/dev/null || kill -0 $pull_images_pid 2>/dev/null || kill -0 $apt_mirror_pid 2>/dev/null; do
+        for i in $(seq 0 7); do
             printf "\r${spinner:$i:1}"
             sleep .1
         done
     done
     printf "\r"
+    echo "All images downloaded"
+
+    # Check the log files for errors after all processes are done
+    echo "Checking log files for errors..."
+
+    if check_log_for_errors "/tmp/download_py.log"; then
+        exit 1
+    fi
+
+    if check_log_for_errors "/tmp/pull_images_sh.log"; then
+        exit 1
+    fi
+
+    if check_log_for_errors "/tmp/apt_mirror.log"; then
+        exit 1
+    fi
+
+    echo "No errors found in log files."    
+}
+
+
+upload_images() {
+    # Define the directory where script will be downloaded
+    download_dir="/images"
+
+    # URL and filename
+    file_url="https://raw.githubusercontent.com/wkonitzer/airgapped-mcc/main/push_images.sh"
+    file_name="push_images.sh"
+
+    # Download the file and set execute permission
+    wget "$file_url" -O "$download_dir/$file_name" && chmod +x "$download_dir/$file_name"
 
     # Once pull_images.sh is completed, run push_images.sh
     echo "Starting push_images.sh..."
@@ -507,47 +553,66 @@ download_and_execute_scripts() {
     done
     printf "\r"
     
-    echo "Script execution completed."
+    echo "All images pushed"
+
+    # Check the log files for errors after all processes are done
+    echo "Checking log files for errors..."
+
+    if check_log_for_errors "/tmp/push_images_sh.log"; then
+        exit 1
+    fi
+
+    echo "No errors found in log files."      
+}
+
+# Function to check log file for errors
+check_log_for_errors() {
+    local log_file=$1
+    # Define your error criteria here, e.g., grep for "ERROR", "Error", "Failed", etc.
+    if grep -Ei "error|failed" "$log_file"; then
+        echo "Error found in log file: $log_file"
+        return 1
+    fi
 }
 
 setup_etc_hosts() {
-  local config_file="/etc/dnsmasq.d/local-mirror.conf"
+    local config_file="/etc/dnsmasq.d/local-mirror.conf"
 
-  echo "Reading domain and IP information from $config_file..."
+    echo "Reading domain and IP information from $config_file..."
 
-  # Check if the configuration file exists
-  if [ ! -f "$config_file" ]; then
-    echo "Configuration file $config_file not found. Please check the file path."
-    return 1
-  fi
-
-  echo "Configuring /etc/hosts..."
-
-  while IFS= read -r line; do
-    # Extract the IP address and domain from each line
-    if [[ "$line" =~ address=/(.+)/(.+) ]]; then
-      local domain="${BASH_REMATCH[1]}"
-      local ip="${BASH_REMATCH[2]}"
-
-      # Check and update /etc/hosts
-      if grep -qE "^$ip\s+$domain" /etc/hosts; then
-        echo "$domain already exists with the correct IP in /etc/hosts, skipping..."
-      elif grep -qE "\s+$domain" /etc/hosts; then
-        echo "Updating $domain in /etc/hosts..."
-        sed -i "/\s$domain/c\\$ip $domain" /etc/hosts
-      else
-        echo "Adding $domain to /etc/hosts..."
-        echo "$ip $domain" >> /etc/hosts
-      fi
+    # Check if the configuration file exists
+    if [ ! -f "$config_file" ]; then
+        echo "Configuration file $config_file not found. Please check the file path."
+        return 1
     fi
-  done < "$config_file"
 
-  echo "/etc/hosts updated"
+    echo "Configuring /etc/hosts..."
+
+    while IFS= read -r line; do
+        # Extract the IP address and domain from each line
+        if [[ "$line" =~ address=/(.+)/(.+) ]]; then
+            local domain="${BASH_REMATCH[1]}"
+            local ip="${BASH_REMATCH[2]}"
+
+            # Check and update /etc/hosts
+            if grep -qE "^$ip\s+$domain" /etc/hosts; then
+                echo "$domain already exists with the correct IP in /etc/hosts, skipping..."
+            elif grep -qE "\s+$domain" /etc/hosts; then
+                echo "Updating $domain in /etc/hosts..."
+                sed -i "/\s$domain/c\\$ip $domain" /etc/hosts
+            else
+                echo "Adding $domain to /etc/hosts..."
+                echo "$ip $domain" >> /etc/hosts
+            fi
+        fi
+    done < "$config_file"
+
+    echo "/etc/hosts updated"
 }
 
 
 
-# Calling the create_lv function
+# Setup storage
 create_lv
 
 # Setup DNS server
@@ -574,7 +639,13 @@ setup_azure_cli
 
 echo "Setup complete.. starting mirror creation"
 
-download_and_execute_scripts
+# Download images
+download_images
 
-# modidify /etc/hosts
+# swap endpoints /etc/hosts
 setup_etc_hosts
+
+# Upload images
+upload_images
+
+echo "Mirror creation complete"
