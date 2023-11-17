@@ -27,6 +27,16 @@ if [[ -z "${AZURE_PASSWORD}" ]]; then
     exit 1
 fi
 
+# Check if a parameter was provided
+if [ -z "$1" ]; then
+    echo "Error: No release version provided."
+    echo "Usage: $0 <release_version>"
+    echo "Example: $0 17.0.0"
+    exit 1
+fi
+
+version="$1"
+
 # Check if Logical Volume already exists
 lv_exists() {
     lvdisplay /dev/images/images > /dev/null 2>&1
@@ -469,6 +479,49 @@ setup_azure_cli() {
 }
 
 # Setup tinyproxy
+install_and_configure_tinyproxy() {
+    # Check if tinyproxy is installed, install if not
+    if ! command -v tinyproxy >/dev/null 2>&1; then
+        echo "Installing tinyproxy..."
+        apt-get update
+        apt-get install -y tinyproxy
+    else
+        echo "tinyproxy is already installed."
+    fi
+
+    # Create systemd timer for tinyproxy if it doesn't exist
+    local timer_file="/etc/systemd/system/tinyproxy-restart.timer"
+    if [ ! -f "$timer_file" ]; then
+        echo "Creating tinyproxy restart timer..."
+        cat > "$timer_file" <<- EOF
+[Unit]
+Description=Restart tinyproxy every 3 hours
+
+[Timer]
+OnBootSec=3h
+OnUnitActiveSec=3h
+Unit=tinyproxy.service
+
+[Install]
+WantedBy=timers.target
+EOF
+        systemctl daemon-reload
+        systemctl enable tinyproxy-restart.timer
+        systemctl start tinyproxy-restart.timer
+    else
+        echo "tinyproxy restart timer already exists."
+    fi
+
+    # Update tinyproxy configuration
+    local config_file="/etc/tinyproxy/tinyproxy.conf"
+    if ! grep -q "^Allow 0.0.0.0/0" "$config_file"; then
+        echo "Updating tinyproxy configuration..."
+        echo "Allow 0.0.0.0/0" >> "$config_file"
+        systemctl restart tinyproxy
+    else
+        echo "tinyproxy configuration already updated."
+    fi
+}
 
 download_images() {
     # Define the directory where the files will be downloaded
@@ -526,7 +579,6 @@ download_images() {
 
     echo "No errors found in log files."    
 }
-
 
 upload_images() {
     # Define the directory where script will be downloaded
@@ -588,6 +640,9 @@ setup_etc_hosts() {
 
     echo "Configuring /etc/hosts..."
 
+    # Add a marker before script's entries
+    echo "# BEGIN Custom Script Entries" >> /etc/hosts    
+
     while IFS= read -r line; do
         # Extract the IP address and domain from each line
         if [[ "$line" =~ address=/(.+)/(.+) ]]; then
@@ -607,10 +662,26 @@ setup_etc_hosts() {
         fi
     done < "$config_file"
 
+    # Add a marker after script's entries
+    echo "# END Custom Script Entries" >> /etc/hosts    
+
     echo "/etc/hosts updated"
 }
 
+remove_custom_hosts_entries() {
+    # Check if the markers are present
+    if grep -q "# BEGIN Custom Script Entries" /etc/hosts && grep -q "# END Custom Script Entries" /etc/hosts; then
+        echo "Removing custom entries from /etc/hosts..."
+        sed -i '/# BEGIN Custom Script Entries/,/# END Custom Script Entries/d' /etc/hosts
+        echo "Custom entries removed."
+    else
+        echo "No custom entries found in /etc/hosts."
+    fi
+}
 
+
+# Remove custom hosts entries
+remove_custom_hosts_entries
 
 # Setup storage
 create_lv
@@ -620,7 +691,7 @@ setup_dnsmasq
 
 # Setup apt-mirror
 setup_aptmirror
-setup_aptmirror_config "15.0.4"
+setup_aptmirror_config "$version"
 
 # Create certificates
 create_certificates
@@ -636,6 +707,9 @@ setup_python_extras
 
 # Setup Azure CLI
 setup_azure_cli
+
+# Setup Tinyproxy
+install_and_configure_tinyproxy
 
 echo "Setup complete.. starting mirror creation"
 
