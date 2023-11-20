@@ -25,33 +25,29 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
-# Check if running inside a screen session
-if [ -z "$STY" ]; then
-    log "This script is not running inside a screen session."
-    log "Please run this script inside a screen session."
-    exit 1
-fi
+# Get the first argument to determine the operation
+operation="$1"
 
-# Check for AZURE_USER and AZURE_PASSWORD environment variables
-if [[ -z "${AZURE_USER}" ]]; then
-    log "Environment variable AZURE_USER is not set. Please set it and try again."
-    exit 1
-fi
+# Perform checks only if the operation is not 'setup-airgap-server'
+if [ "$operation" != "setup-airgap-server" ]; then
+    # Check if running inside a screen session
+    if [ -z "$STY" ]; then
+        log "This script is not running inside a screen session."
+        log "Please run this script inside a screen session."
+        exit 1
+    fi
 
-if [[ -z "${AZURE_PASSWORD}" ]]; then
-    log "Environment variable AZURE_PASSWORD is not set. Please set it and try again."
-    exit 1
-fi
+    # Check for AZURE_USER and AZURE_PASSWORD environment variables
+    if [[ -z "${AZURE_USER}" ]]; then
+        log "Environment variable AZURE_USER is not set. Please set it and try again."
+        exit 1
+    fi
 
-# Check if a parameter was provided
-if [ -z "$1" ]; then
-    log "Error: No release version provided."
-    log "Usage: $0 <release_version>"
-    log "Example: $0 17.0.0"
-    exit 1
+    if [[ -z "${AZURE_PASSWORD}" ]]; then
+        log "Environment variable AZURE_PASSWORD is not set. Please set it and try again."
+        exit 1
+    fi
 fi
-
-version="$1"
 
 # Check if Logical Volume already exists
 lv_exists() {
@@ -943,9 +939,19 @@ sync_images() {
     log "Mirror creation complete"
 }
 
+# Case statement for handling different operations
 case "$1" in
-    setup-mirror-server)
-        setup_mirror_server
+    setup-mirror-server | init)
+        # Check if a version parameter was provided for these cases
+        if [ -z "$2" ]; then
+            log "Error: No release version provided."
+            log "Usage: $0 $1 <release_version>"
+            log "Example: $0 $1 17.0.0"
+            exit 1
+        fi
+        version="$2"
+        [ "$1" = "setup-mirror-server" ] && setup_mirror_server
+        [ "$1" = "init" ] && { setup_mirror_server; sync_images; }
         ;;
     setup-airgap-server)
         setup_airgap_server
@@ -959,12 +965,8 @@ case "$1" in
     sync-images)
         sync_images
         ;;
-    init)
-        setup_mirror_server
-        sync_images
-        ;;
     *)
-        echo "Usage: $0 {setup-mirror-server|setup-airgap-server|download-images|upload-images|sync-images|init}"
+        echo "Usage: $0 {setup-mirror-server|setup-airgap-server|download-images|upload-images|sync-images|init} <release_version>"
         exit 1
         ;;
 esac
