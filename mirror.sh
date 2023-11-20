@@ -11,6 +11,9 @@ IMAGES_DIR="/images"
 
 LOG_FILE="/tmp/installation.log"
 
+# Global flag
+airgapserver=false # Set this to true if operating on an air-gapped server
+
 # Log Function
 log() {
     echo "$(date +%Y-%m-%dT%H:%M:%S) - $1" | tee -a "$LOG_FILE"
@@ -134,13 +137,26 @@ setup_dnsmasq() {
         return 1
     fi
 
-    # Check if dnsmasq is installed, install if not
-    if ! command -v dnsmasq >/dev/null 2>&1; then
-        log "Installing dnsmasq..."
-        apt-get update
-        apt-get install -y dnsmasq
+    # Check if the airgapserver flag is set
+    if [ "$airgapserver" = true ]; then
+        log "Airgap server mode is enabled. Checking if dnsmasq is installed..."
+
+        # Check if dnsmasq is installed
+        if ! command -v dnsmasq >/dev/null 2>&1; then
+            log "Error: dnsmasq is not installed. Please install it manually."
+            exit 1
+        else
+            log "dnsmasq is already installed."
+        fi
     else
-        log "dnsmasq is already installed."
+        # If not in airgap server mode, install dnsmasq if it's not already installed
+        if ! command -v dnsmasq >/dev/null 2>&1; then
+            log "Installing dnsmasq..."
+            apt-get update
+            apt-get install -y dnsmasq
+        else
+            log "dnsmasq is already installed."
+        fi
     fi
 
     # Setting up dnsmasq configuration
@@ -328,8 +344,26 @@ EOM
 
 # Function to setup Nginx
 setup_nginx() {
-    # Install nginx
-    apt-get install -y nginx
+    # Check if the airgapserver flag is set
+    if [ "$airgapserver" = true ]; then
+        log "Airgap server mode is enabled. Checking if nginx is installed..."
+
+        # Check if nginx is installed
+        if ! command -v nginx >/dev/null 2>&1; then
+            log "Error: nginx is not installed. Please install it manually."
+            exit 1
+        else
+            log "nginx is already installed."
+        fi
+    else
+        # If not in airgap server mode, install nginx if it's not already installed
+        if ! command -v nginx >/dev/null 2>&1; then
+            log "Installing nginx..."
+            apt-get install -y nginx
+        else
+            log "nginx is already installed."
+        fi
+    fi
 
     # Configure nginx for each domain in /etc/dnsmasq.d/local-mirror.conf, except for mirantis.azurecr.io
     echo "" > /etc/nginx/conf.d/mirrors.conf
@@ -471,6 +505,10 @@ setup_python_extras() {
 
     # Install other Python packages
     pip3 install beautifulsoup4
+    pip3 install docker
+    pip3 install azure-mgmt-containerregistry
+    pip3 install azure-identity
+    pip3 install install python-dateutil
 }
 
 setup_azure_cli() {
@@ -491,12 +529,25 @@ setup_azure_cli() {
 
 # Setup tinyproxy
 install_and_configure_tinyproxy() {
-    # Check if tinyproxy is installed, install if not
-    if ! command -v tinyproxy >/dev/null 2>&1; then
-        log "Installing tinyproxy..."
-        apt-get install -y tinyproxy
+    # Check if the airgapserver flag is set
+    if [ "$airgapserver" = true ]; then
+        log "Airgap server mode is enabled. Checking if tinyproxy is installed..."
+
+        # Check if tinyproxy is installed
+        if ! command -v tinyproxy >/dev/null 2>&1; then
+            log "Error: tinyproxy is not installed. Please install it manually."
+            exit 1
+        else
+            log "tinyproxy is already installed."
+        fi
     else
-        log "tinyproxy is already installed."
+        # If not in airgap server mode, install tinyproxy if it's not already installed
+        if ! command -v tinyproxy >/dev/null 2>&1; then
+            log "Installing tinyproxy..."
+            apt-get install -y tinyproxy
+        else
+            log "tinyproxy is already installed."
+        fi
     fi
 
     # Create systemd timer for tinyproxy if it doesn't exist
@@ -533,14 +584,24 @@ EOF
     fi
 }
 
-download_images() {
+# Function to check log file for errors
+check_log_for_errors() {
+    local log_file=$1
+    # Exclude specific line, then check for errors
+    if grep -v "Post Mirror script has completed. See above output for any possible errors." "$log_file" | grep -Ei "error|failed"; then
+        log "Error found in log file: $log_file"
+        return 1
+    fi
+}
+
+download_all_images() {
     # Define the directory where the files will be downloaded
     download_dir="$IMAGES_DIR"
 
     # File URLs to download
     declare -A files=(
         ["download.py"]="https://raw.githubusercontent.com/wkonitzer/airgapped-mcc/main/download.py"
-        ["pull_images.sh"]="https://raw.githubusercontent.com/wkonitzer/airgapped-mcc/main/pull_images.sh"
+        ["image_sync.py"]="https://raw.githubusercontent.com/wkonitzer/airgapped-mcc/main/image_sync.py"
     )
 
     # Download the files
@@ -549,13 +610,13 @@ download_images() {
     done
 
     # Run download.py, pull_images.sh, and apt-mirror in parallel
-    log "Starting download.py, pull_images.sh, and apt-mirror in parallel..."
+    log "Starting download.py, image_sync.py, and apt-mirror in parallel..."
     
     python3 "$download_dir/download.py" &>/tmp/download_py.log &
     download_pid=$!  # Capture PID of download.py
     
-    bash "$download_dir/pull_images.sh" &>/tmp/pull_images_sh.log &
-    pull_images_pid=$!  # Capture PID of pull_images.sh
+    python3 "$download_dir/image_sync.py" &>/tmp/image_sync_py.log &
+    image_sync_pid=$!  # Capture PID of image_sync.py
     
     /usr/bin/apt-mirror &>/tmp/apt_mirror.log &
     apt_mirror_pid=$!  # Capture PID of apt-mirror
@@ -563,7 +624,7 @@ download_images() {
     # Spinner for all processes
     log "Waiting for all images to download..."
     spinner="/|\\-/|\\-"
-    while kill -0 $download_pid 2>/dev/null || kill -0 $pull_images_pid 2>/dev/null || kill -0 $apt_mirror_pid 2>/dev/null; do
+    while kill -0 $download_pid 2>/dev/null || kill -0 $image_sync_pid 2>/dev/null || kill -0 $apt_mirror_pid 2>/dev/null; do
         for i in $(seq 0 7); do
             printf "\r${spinner:$i:1}"
             sleep .1
@@ -575,22 +636,37 @@ download_images() {
     # Check the log files for errors after all processes are done
     log "Checking log files for errors..."
 
-    if check_log_for_errors "/tmp/download_py.log"; then
+    # Check /tmp/download_py.log
+    check_log_for_errors "/tmp/download_py.log"
+    if [ $? -eq 0 ]; then
+        log "No errors found in /tmp/download_py.log."
+    else
+        log "Error found in /tmp/download_py.log, exiting"
         exit 1
     fi
 
-    if check_log_for_errors "/tmp/pull_images_sh.log"; then
+    # Check /tmp/image_sync_py.log
+    check_log_for_errors "/tmp/image_sync_py.log"
+    if [ $? -eq 0 ]; then
+        log "No errors found in /tmp/image_sync_py.log."
+    else
+        log "Error found in /tmp/image_sync_py.log, exiting"
         exit 1
     fi
 
-    if check_log_for_errors "/tmp/apt_mirror.log"; then
+    # Check /tmp/apt_mirror.log
+    check_log_for_errors "/tmp/apt_mirror.log"
+    if [ $? -eq 0 ]; then
+        log "No errors found in /tmp/apt_mirror.log."
+    else
+        log "Error found in /tmp/apt_mirror.log, exiting"
         exit 1
     fi
 
-    log "No errors found in log files."    
+    log "No errors found in image download log files."    
 }
 
-upload_images() {
+upload_all_images() {
     # Define the directory where script will be downloaded
     download_dir="$IMAGES_DIR"
 
@@ -620,21 +696,16 @@ upload_images() {
     # Check the log files for errors after all processes are done
     log "Checking log files for errors..."
 
-    if check_log_for_errors "/tmp/push_images_sh.log"; then
+    # Check /tmp/apt_mirror.log
+    check_log_for_errors "/tmp/push_images_sh.log"
+    if [ $? -eq 0 ]; then
+        log "No errors found in /tmp/push_images_sh.log."
+    else
+        log "Error found in /tmp/push_images_sh.log, exiting"
         exit 1
-    fi
+    fi    
 
-    log "No errors found in log files."      
-}
-
-# Function to check log file for errors
-check_log_for_errors() {
-    local log_file=$1
-    # Define your error criteria here, e.g., grep for "ERROR", "Error", "Failed", etc.
-    if grep -Ei "error|failed" "$log_file"; then
-        log "Error found in log file: $log_file"
-        return 1
-    fi
+    log "No errors found in image push log files."      
 }
 
 setup_etc_hosts() {
@@ -690,7 +761,7 @@ remove_custom_hosts_entries() {
 }
 
 check_dependencies() {
-    local dependencies=("wget" "jq" "openssl")
+    local dependencies=("wget" "jq" "openssl" "apt-rdepends")
     local missing_deps=()
 
     for dep in "${dependencies[@]}"; do
@@ -719,50 +790,181 @@ error_exit() {
     exit 1
 }
 
+# Function to download a package and its dependencies
+download_package() {
+    PACKAGE_NAME=$1
+    DOWNLOAD_LOCATION=$2
+    TEMP_DIR=$(mktemp -d)
+    log "Downloading $PACKAGE_NAME and its dependencies..."
 
-# Remove custom hosts entries
-remove_custom_hosts_entries
+    # Change to temporary directory
+    pushd "$TEMP_DIR" > /dev/null
 
-# Check dependencies
-check_dependencies
+    # Download the main package
+    apt-get download "$PACKAGE_NAME"
 
-# Setup storage
-create_lv
+    # Find and download all dependencies
+    apt-rdepends "$PACKAGE_NAME" | \
+    grep -v "^ " | \
+    xargs -I {} apt-get download {}
 
-# Setup DNS server
-setup_dnsmasq
+    # Move all downloaded packages to the desired location
+    mv *.deb "$DOWNLOAD_LOCATION/"
 
-# Setup apt-mirror
-setup_aptmirror
-setup_aptmirror_config "$version"
+    # Change back to the original directory
+    popd > /dev/null
+}
 
-# Create certificates
-create_certificates
+create_client_install() {
+    log "Creating airgapped-server install files"
 
-# Setup nginx
-setup_nginx
+    # Directory to store the downloaded packages
+    DOWNLOAD_DIR="$IMAGES_DIR/downloaded_packages"
+    mkdir -p "$DOWNLOAD_DIR"
 
-# Setup docker registry
-setup_docker_registry
+    # Download Nginx and its dependencies
+    download_package "nginx" "$DOWNLOAD_DIR"
 
-# Setup python
-setup_python_extras
+    # Download Tinyproxy and its dependencies
+    download_package "tinyproxy" "$DOWNLOAD_DIR"
 
-# Setup Azure CLI
-setup_azure_cli
+    # Download jq and its dependencies
+    download_package "jq" "$DOWNLOAD_DIR"
 
-# Setup Tinyproxy
-install_and_configure_tinyproxy
+    # Download docker and its dependencies
+    download_package "docker.io" "$DOWNLOAD_DIR"    
 
-log "Setup complete.. starting mirror creation"
+    log "All packages downloaded to $DOWNLOAD_DIR" 
 
-# Download images
-download_images
+    # Copy the running script to $IMAGES_DIR
+    SCRIPT_PATH=$(readlink -f "$0")
+    cp "$SCRIPT_PATH" "$IMAGES_DIR/"
+    log "Script copied to $IMAGES_DIR"
+}
 
-# swap endpoints /etc/hosts
-setup_etc_hosts
+# Function to install packages from a directory
+install_downloaded_packages() {
+    # Directory where the downloaded packages are stored
+    DOWNLOAD_DIR="$IMAGES_DIR/downloaded_packages"
 
-# Upload images
-upload_images
+    # Change to the directory containing the downloaded packages
+    pushd "$DOWNLOAD_DIR" > /dev/null
 
-log "Mirror creation complete"
+    # Loop through all .deb files and install them if not already installed
+    for pkg in *.deb; do
+        # Extract package name from .deb file
+        PKG_NAME=$(dpkg-deb -f "$pkg" Package)
+
+        # Check if package is already installed
+        if dpkg -l | grep -qw "$PKG_NAME"; then
+            log "Package $PKG_NAME is already installed. Skipping..."
+        else
+            log "Installing package $PKG_NAME..."
+            dpkg -i "$pkg"
+        fi
+    done
+
+    # Fix any broken dependencies
+    apt-get -f install
+
+    # Change back to the original directory
+    popd > /dev/null
+}
+
+setup_airgap_server() {
+    airgapserver=true
+    install_downloaded_packages
+    remove_custom_hosts_entries
+    setup_dnsmasq
+    setup_nginx
+    setup_docker_registry
+    install_and_configure_tinyproxy
+    setup_etc_hosts
+    log "Airgap server setup complete."
+}    
+
+setup_mirror_server() {
+    # Remove custom hosts entries
+    remove_custom_hosts_entries
+
+    # Check dependencies
+    check_dependencies
+
+    # Setup storage
+    create_lv
+
+    # Setup DNS server
+    setup_dnsmasq
+
+    # Setup apt-mirror
+    setup_aptmirror
+    setup_aptmirror_config "$version"
+
+    # Create certificates
+    create_certificates
+
+    # Setup nginx
+    setup_nginx
+
+    # Setup docker registry
+    setup_docker_registry
+
+    # Setup python
+    setup_python_extras
+
+    # Setup Azure CLI
+    setup_azure_cli
+
+    # Setup Tinyproxy
+    install_and_configure_tinyproxy
+
+    # Copy packages for airgap server
+    create_client_install
+
+    log "Mirror server setup complete."
+}
+
+download_images() {
+    # Download images
+    download_all_images
+}
+
+upload_images() {
+    # swap endpoints /etc/hosts
+    setup_etc_hosts
+
+    # Upload images
+    upload_all_images
+}
+
+sync_images() {
+    download_images
+    upload_images
+    log "Mirror creation complete"
+}
+
+case "$1" in
+    setup-mirror-server)
+        setup_mirror_server
+        ;;
+    setup-airgap-server)
+        setup_airgap_server
+        ;;    
+    download-images)
+        download_images
+        ;;
+    upload-images)
+        upload_images
+        ;;
+    sync-images)
+        sync_images
+        ;;
+    init)
+        setup_mirror_server
+        sync_images
+        ;;
+    *)
+        echo "Usage: $0 {setup-mirror-server|setup-airgap-server|download-images|upload-images|sync-images|init}"
+        exit 1
+        ;;
+esac
