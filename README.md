@@ -35,3 +35,8 @@ This guide details the process for using the `mirror.sh` script on image cache s
 - Run `/images/mirror.sh setup-airgap-server` for configuration.
 - Once configured, use the airgap server as the proxy in MCC/MOSK installations.
 
+### Notes
+By default it syncs 12 months of images from Azure and the binary CDN delivery network, but you can add a <month> parameter to download-images to change that.
+e.g. ./mirror.sh download-images 6
+for 6 months worth of images.
+
