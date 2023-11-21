@@ -29,7 +29,7 @@ parser = argparse.ArgumentParser(description='Update Docker images from Azure re
 parser.add_argument('--repo', help='Specify a specific repository or prefix to update', default=None)
 parser.add_argument('--workers', type=int, default=5, help='Number of worker threads to use')
 parser.add_argument('--loglevel', default='INFO', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], help='Set the logging level')
-parser.add_argument('--months', type=int, default=6, help='Number of months to consider for updating images')
+parser.add_argument('--months', type=int, default=12, help='Number of months to consider for updating images')
 args = parser.parse_args()
 
 # Set up logging based on the command-line argument

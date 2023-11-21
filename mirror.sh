@@ -29,25 +29,25 @@ fi
 operation="$1"
 
 # Perform checks only if the operation is not 'setup-airgap-server'
-if [ "$operation" != "setup-airgap-server" ]; then
-    # Check if running inside a screen session
-    if [ -z "$STY" ]; then
-        log "This script is not running inside a screen session."
-        log "Please run this script inside a screen session."
-        exit 1
-    fi
+#if [ "$operation" != "setup-airgap-server" ]; then
+#    # Check if running inside a screen session
+#    if [ -z "$STY" ]; then
+#        log "This script is not running inside a screen session."
+#        log "Please run this script inside a screen session."
+#        exit 1
+#    fi
 
     # Check for AZURE_USER and AZURE_PASSWORD environment variables
-    if [[ -z "${AZURE_USER}" ]]; then
-        log "Environment variable AZURE_USER is not set. Please set it and try again."
-        exit 1
-    fi
+#    if [[ -z "${AZURE_USER}" ]]; then
+#        log "Environment variable AZURE_USER is not set. Please set it and try again."
+#        exit 1
+#    fi
 
-    if [[ -z "${AZURE_PASSWORD}" ]]; then
-        log "Environment variable AZURE_PASSWORD is not set. Please set it and try again."
-        exit 1
-    fi
-fi
+#    if [[ -z "${AZURE_PASSWORD}" ]]; then
+#        log "Environment variable AZURE_PASSWORD is not set. Please set it and try again."
+#        exit 1
+#    fi
+#fi
 
 # Check if Logical Volume already exists
 lv_exists() {
@@ -452,6 +452,7 @@ setup_docker_registry() {
     jq -n --arg dataRoot "$IMAGES_DIR/docker/data/directory" '{"data-root": $dataRoot}' > /etc/docker/daemon.json
 
     # Restart Docker to apply new configuration
+    log "Restarting docker..this may take some time."
     systemctl restart docker
 
     # Check if the Docker registry container is already running
@@ -508,8 +509,13 @@ setup_python_extras() {
 }
 
 setup_azure_cli() {
-    # Install azure-cli
-    curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+    # Check if azure-cli is already installed
+    if az --version &> /dev/null; then
+        log "Azure CLI is already installed."
+    else
+        log "Installing Azure CLI..."
+        curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+    fi
 
     # Login to Azure
     az login -u "$AZURE_USER" -p "$AZURE_PASSWORD"
@@ -786,26 +792,71 @@ error_exit() {
     exit 1
 }
 
+# Global variable to keep track of downloaded packages
+declare -A downloaded_pkgs
+
+# Global variable to keep track of processed packages
+declare -A processed_pkgs
+
+# Function to download a single package
+download_single_pkg() {
+    local single_pkg=${1//<}  # Remove leading angle bracket
+    single_pkg=${single_pkg//>}  # Remove trailing angle bracket
+
+    # Check if the package has already been processed to avoid circular dependencies
+    if [[ ${processed_pkgs[$single_pkg]} ]]; then
+        return
+    fi
+
+    # Check if it's a real package or a virtual package
+    log "Processing: $single_pkg"
+    if apt-cache showpkg "$single_pkg" | grep -A1 'Versions:' | tail -n 1 | grep -E '([0-9]+(\.[0-9]+)+)' > /dev/null; then
+        # It's a real package, mark as processed and download it
+        processed_pkgs[$single_pkg]=1        
+        sudo -u _apt apt-get download "$single_pkg" || {
+            log "Warning: Failed to download $single_pkg"
+            return
+        }
+    else
+        # Handle virtual package by finding a real package that provides it
+        local real_pkg=$(apt-cache --names-only search "^$single_pkg" | awk '{print $1}' | head -n 1)
+        if [ -n "$real_pkg" ]; then
+            log "Downloading $real_pkg as a replacement for virtual package $single_pkg"
+            processed_pkgs[$single_pkg]=1
+            sudo -u _apt apt-get download "$real_pkg"
+            single_pkg="$real_pkg"  # Update single_pkg to the real package name
+        else
+            log "Info: $single_pkg is a virtual package or does not exist."
+            return
+        fi
+    fi
+
+    # Get dependencies of the package
+    local dependencies=$(apt-cache depends "$single_pkg" | awk '/Depends:/ {print $2}')
+    for dep in $dependencies; do
+        download_single_pkg "$dep"
+    done
+}
+
 # Function to download a package and its dependencies
 download_package() {
     PACKAGE_NAME=$1
     DOWNLOAD_LOCATION=$2
     TEMP_DIR=$(mktemp -d)
-    log "Downloading $PACKAGE_NAME and its dependencies..."
+    log "Downloading $PACKAGE_NAME and its dependencies to $TEMP_DIR..."
+
+    # Change ownership of the temporary directory to '_apt' user
+    chown _apt:root "$TEMP_DIR"    
 
     # Change to temporary directory
-    pushd "$TEMP_DIR" > /dev/null
+    pushd "$TEMP_DIR" > /dev/null 
 
-    # Download the main package
-    apt-get download "$PACKAGE_NAME"
-
-    # Find and download all dependencies
-    apt-rdepends "$PACKAGE_NAME" | \
-    grep -v "^ " | \
-    xargs -I {} apt-get download {}
+    # Download the main package and resolve dependencies
+    download_single_pkg "$PACKAGE_NAME"  
 
     # Move all downloaded packages to the desired location
-    mv *.deb "$DOWNLOAD_LOCATION/"
+    log "Moving downloaded packages to $DOWNLOAD_LOCATION..."
+    mv *.deb "$DOWNLOAD_LOCATION/" 2>&1 | tee -a /tmp/move_log.txt   
 
     # Change back to the original directory
     popd > /dev/null
@@ -819,15 +870,19 @@ create_client_install() {
     mkdir -p "$DOWNLOAD_DIR"
 
     # Download Nginx and its dependencies
+    log "Downloading nginx"
     download_package "nginx" "$DOWNLOAD_DIR"
 
     # Download Tinyproxy and its dependencies
+    log "Downloading tinyproxy"
     download_package "tinyproxy" "$DOWNLOAD_DIR"
 
     # Download jq and its dependencies
+    log "Downloading jq"
     download_package "jq" "$DOWNLOAD_DIR"
 
     # Download docker and its dependencies
+    log "Downloading docker"
     download_package "docker.io" "$DOWNLOAD_DIR"    
 
     log "All packages downloaded to $DOWNLOAD_DIR" 
@@ -921,11 +976,16 @@ setup_mirror_server() {
 }
 
 download_images() {
+    remove_custom_hosts_entries
+    setup_azure_cli
+
     # Download images
     download_all_images
 }
 
 upload_images() {
+    remove_custom_hosts_entries
+
     # swap endpoints /etc/hosts
     setup_etc_hosts
 
@@ -967,6 +1027,7 @@ case "$1" in
         ;;
     *)
         echo "Usage: $0 {setup-mirror-server|setup-airgap-server|download-images|upload-images|sync-images|init} <release_version>"
+        echo "e.g. ./mirror.sh setup-mirror-server 17.0.0"
         exit 1
         ;;
 esac
