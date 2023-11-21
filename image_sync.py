@@ -7,6 +7,7 @@ import logging
 import threading
 import time
 import argparse
+import requests
 from datetime import datetime, timedelta, timezone
 from dateutil import parser as dateutil_parser
 from azure.identity import AzureCliCredential
@@ -25,12 +26,18 @@ class ThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
             self._threads.add(t)
 
 # Set up argument parsing
-parser = argparse.ArgumentParser(description='Update Docker images from Azure registry.')
+parser = argparse.ArgumentParser(description='Manage Docker images from Azure registry.')
+subparsers = parser.add_subparsers(dest='mode', required=True)
+download_parser = subparsers.add_parser('download', help='Download and update Docker images')
+upload_parser = subparsers.add_parser('upload', help='Upload Docker images')
 parser.add_argument('--repo', help='Specify a specific repository or prefix to update', default=None)
 parser.add_argument('--workers', type=int, default=5, help='Number of worker threads to use')
 parser.add_argument('--loglevel', default='INFO', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], help='Set the logging level')
 parser.add_argument('--months', type=int, default=12, help='Number of months to consider for updating images')
 args = parser.parse_args()
+
+# Set the CA bundle for SSL certificate verification
+os.environ['REQUESTS_CA_BUNDLE'] = '/etc/ssl/certs/ca-certificates.crt'
 
 # Set up logging based on the command-line argument
 numeric_level = getattr(logging, args.loglevel.upper(), None)
@@ -162,6 +169,95 @@ def get_azure_images_checksums():
 
     return all_azure_checksums
 
+# Function to query local docker registry
+def get_remote_docker_images(registry_name):
+    logging.info("Fetching remote images")
+    remote_checksums = {}
+
+    # Function to get repositories from the remote registry
+    def get_repositories():
+        logging.info("Fetching list of repositories")
+        repositories = []
+        url = f"https://{registry_name}/v2/_catalog"
+        while url:
+            try:
+                response = requests.get(url)
+                response.raise_for_status()
+                data = response.json()
+                repositories.extend(data.get('repositories', []))
+
+                # Check for the next page link
+                url = data.get('next')
+            except requests.RequestException as e:
+                logging.error(f"Error fetching repositories from {registry_name}: {e}")
+                break  # Exit the loop on error
+        logging.debug(f"List of repositories: {repositories}")
+        return repositories
+
+    # Function to get tags for a specific repository
+    def get_tags_for_repository(repository):
+        logging.info(f"Fetching tags for {repository}")
+        tags = []
+        url = f"https://{registry_name}/v2/{repository}/tags/list"
+        while url:
+            try:
+                response = requests.get(url)
+                response.raise_for_status()
+                data = response.json()
+                tags.extend(data.get('tags', []))
+
+                # Check for the next page link
+                url = data.get('next')
+            except requests.RequestException as e:
+                logging.warning(f"Error fetching tags for repository {repository}: {e}")
+                break  # Exit the loop on error
+        logging.debug(f"List of tags: {tags}")
+        return tags
+
+    # Function to get the digest for a specific image tag
+    def get_digest_for_tag(repository, tag):
+        logging.debug(f"Fetching digest for {repository}, tag: {tag}")
+        url = f"https://{registry_name}/v2/{repository}/manifests/{tag}"
+        headers = {'Accept': 'application/vnd.docker.distribution.manifest.v2+json'}
+        try:
+            response = requests.head(url, headers=headers)
+            response.raise_for_status()
+            return response.headers.get('Docker-Content-Digest')
+        except requests.RequestException as e:
+            logging.error(f"Error fetching digest for image {repository}:{tag}: {e}")
+            return None
+
+    # Function to process each repository
+    def process_repository(repository):
+        tags = get_tags_for_repository(repository)
+        for tag in tags:
+            digest = get_digest_for_tag(repository, tag)
+            if digest:
+                formatted_tag = f"{repository}:{tag}"
+                remote_checksums[formatted_tag] = digest
+                logging.debug(f"Remote image: {formatted_tag}, Digest: {digest}")
+
+    repositories = get_repositories()
+
+    # Using ThreadPoolExecutor to parallelize repository processing
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
+            # Submitting each repository to the executor
+            future_to_repo = {executor.submit(process_repository, repo): repo for repo in repositories}
+
+            # Iterating over the completed futures
+            for future in concurrent.futures.as_completed(future_to_repo):
+                repo = future_to_repo[future]
+                try:
+                    future.result()  # This will also raise any exceptions caught in process_repository
+                except Exception as e:
+                    logging.error(f"Error processing repository {repo}: {e}")
+    except KeyboardInterrupt:
+        executor.shutdown(wait=False)                
+
+    logging.info("Completed fetching remote images checksums")
+    return remote_checksums
+
 # Function to actually fetch Docker images - to be run in a separate thread
 def fetch_docker_images():
     global all_images
@@ -227,6 +323,24 @@ def pull_image(azure_tag, azure_digest, local_checksums):
     else:
         logging.debug(f"No change detected for image: {azure_tag}")
 
+def push_image(local_tag, local_digest, remote_checksums):
+    remote_digest = remote_checksums.get(local_tag)
+
+    if local_tag.count(':') > 1:
+        logging.warning(f"Skipping image with complex tag structure: {local_tag}")
+        return
+
+    if local_digest != remote_digest:
+        full_image_path = f"{azure_registry_name}/{local_tag}"
+        logging.info(f"Change detected - Local digest: {local_digest}, Remote digest: {remote_digest} for image: {full_image_path}")
+        try:
+            docker_client.images.push(full_image_path)
+            logging.info(f"Successfully pushed image: {full_image_path}")
+        except Exception as e:
+            logging.error(f"Error pushing image {full_image_path}: {e}")
+    else:
+        logging.debug(f"No change detected for image: {local_tag}")
+
 # Compare and pull images
 def update_images():
     try:
@@ -256,14 +370,52 @@ def update_images():
     except KeyboardInterrupt:
         executor.shutdown(wait=False)
 
+# Compare and push images
+def upload_images():
+    try:
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future_local_images = executor.submit(get_local_docker_images, azure_registry_name)
+            future_remote_checksums = executor.submit(get_remote_docker_images, azure_registry_name)
+
+            local_checksums = future_local_images.result()
+            remote_checksums = future_remote_checksums.result()
+    except KeyboardInterrupt:
+        executor.shutdown(wait=False)
+
+    logging.info("Comparing images") 
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
+            future_to_image = {
+                executor.submit(push_image, local_tag, local_digest, remote_checksums): local_tag
+                for local_tag, local_digest in local_checksums.items()
+            }
+            for future in concurrent.futures.as_completed(future_to_image):
+                local_tag = future_to_image[future]
+                try:
+                    # This will also raise any exceptions caught by push_image
+                    future.result()
+                except Exception as e:
+                    logging.error(f"Error in pushing image {azure_tag}: {e}")
+    except KeyboardInterrupt:
+        executor.shutdown(wait=False)
+
 # Run the main function and handle KeyboardInterrupt
 if __name__ == "__main__":
-    logging.info("Starting image update process.")
+    logging.info("Starting process.")
+
     try:
-        azure_resource_group = get_resource_group(azure_registry_name)
-        update_images()
-        logging.info("Image update process complete.")
+        if args.mode == 'download':
+            logging.info("Running in download mode.")
+            azure_resource_group = get_resource_group(azure_registry_name)
+            update_images()
+            logging.info("Image download process complete.")
+        elif args.mode == 'upload':
+            logging.info("Running in upload mode")
+            upload_images()
+            logging.info("Image upload process complete.")
+        else:
+            raise ValueError(f"Unknown mode: {args.mode}")
     except KeyboardInterrupt:
-        logging.info("Image update process interrupted by user.")
+        logging.info("Process interrupted by user.")
     except Exception as e:
         logging.error(f"An error occurred: {e}")

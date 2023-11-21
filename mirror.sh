@@ -338,6 +338,16 @@ EOM
     done
 }
 
+# Update the ca certificates
+update_ca_certificates() {
+    log "Update CA certificates"
+    # Copy the certificate to the desired directory
+    cp $IMAGES_DIR/certs/myCA.crt /usr/local/share/ca-certificates/
+
+    # Update CA certificates
+    update-ca-certificates
+}
+
 # Function to setup Nginx
 setup_nginx() {
     # Check if the airgapserver flag is set
@@ -456,7 +466,8 @@ setup_docker_registry() {
     systemctl restart docker
 
     # Check if the Docker registry container is already running
-    if docker ps -q -f name=^/registry$; then
+    running_container=$(docker ps -q -f name=^/registry$)
+    if [ -n "$running_container" ]; then
         log "Docker registry container is already running."
     else
         log "Running a Docker registry container..."
@@ -939,6 +950,7 @@ setup_airgap_server() {
     install_downloaded_packages
     remove_custom_hosts_entries
     setup_dnsmasq
+    update_ca_certificates
     setup_nginx
     setup_docker_registry
     install_and_configure_tinyproxy
@@ -965,6 +977,7 @@ setup_mirror_server() {
 
     # Create certificates
     create_certificates
+    update_ca_certificates
 
     # Setup nginx
     setup_nginx
@@ -1040,7 +1053,7 @@ case "$1" in
         ;;
     *)
         echo "Usage: $0 {setup-mirror-server|setup-airgap-server|download-images|upload-images|sync-images|init} <release_version>"
-        echo "e.g. ./mirror.sh setup-mirror-server 17.0.0"
+        echo "e.g. ./mirror.sh init 17.0.0"
         exit 1
         ;;
 esac
