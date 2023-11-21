@@ -8,6 +8,7 @@ import threading
 import time
 import argparse
 import requests
+from urllib.parse import urljoin
 from datetime import datetime, timedelta, timezone
 from dateutil import parser as dateutil_parser
 from azure.identity import AzureCliCredential
@@ -174,6 +175,20 @@ def get_remote_docker_images(registry_name):
     logging.info("Fetching remote images")
     remote_checksums = {}
 
+    # Function to extract link header
+    def get_next_page_url(response):
+        link_header = response.headers.get('Link', None)
+        if link_header:
+            # Extract URL from <url>; rel="next"
+            parts = link_header.split(';')
+            if 'rel="next"' in parts[1]:
+                next_page_url = parts[0].strip('<> ')
+                # Convert relative URL to absolute URL
+                next_page_url = urljoin(response.url, next_page_url)
+                logging.debug(f"Next page URL: {next_page_url}")
+                return next_page_url
+        return None
+
     # Function to get repositories from the remote registry
     def get_repositories():
         logging.info("Fetching list of repositories")
@@ -186,12 +201,13 @@ def get_remote_docker_images(registry_name):
                 data = response.json()
                 repositories.extend(data.get('repositories', []))
 
-                # Check for the next page link
-                url = data.get('next')
+                # Get the next page URL from Link header
+                url = get_next_page_url(response)
             except requests.RequestException as e:
                 logging.error(f"Error fetching repositories from {registry_name}: {e}")
                 break  # Exit the loop on error
         logging.debug(f"List of repositories: {repositories}")
+
         return repositories
 
     # Function to get tags for a specific repository
@@ -295,10 +311,17 @@ def get_local_docker_images(registry_name):
                     if registry_name in tag:
                         # Remove the registry URL part
                         formatted_local_tag = tag.replace(registry_name + "/", "")
-
                         digest = img.attrs['RepoDigests'][0].split('@')[-1]
-                        local_checksums[formatted_local_tag] = digest
-                        logging.debug(f"Local image: {formatted_local_tag}, Digest: {digest}")
+                        creation_date_str = img.attrs['Created']
+                        try:
+                            creation_date = dateutil_parser.parse(creation_date_str)
+                            if creation_date.tzinfo is None:  # If the timestamp is offset-naive
+                                creation_date = creation_date.replace(tzinfo=timezone.utc)  # Assume UTC
+                        except ValueError as e:
+                            logging.error(f"Error parsing creation date for {tag}: {e}")
+                            continue                      
+                        local_checksums[formatted_local_tag] = (digest, creation_date)
+                        logging.debug(f"Local image: {formatted_local_tag}, Digest: {digest}, Created: {creation_date}")
 
         return local_checksums
     except Exception as e:
@@ -306,7 +329,9 @@ def get_local_docker_images(registry_name):
         return {}
 
 def pull_image(azure_tag, azure_digest, local_checksums):
-    local_digest = local_checksums.get(azure_tag)
+    # Retrieve the local digest tuple and extract just the digest part
+    local_digest_tuple = local_checksums.get(azure_tag)
+    local_digest = local_digest_tuple[0] if local_digest_tuple else None
 
     if azure_tag.count(':') > 1:
         logging.warning(f"Skipping image with complex tag structure: {azure_tag}")
@@ -323,7 +348,14 @@ def pull_image(azure_tag, azure_digest, local_checksums):
     else:
         logging.debug(f"No change detected for image: {azure_tag}")
 
-def push_image(local_tag, local_digest, remote_checksums):
+def run_docker_push(full_image_path):
+    with subprocess.Popen(["docker", "push", full_image_path], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True) as proc:
+        for line in proc.stdout:
+            logging.info(line.strip())
+
+def push_image(local_tag, local_digest_tuple, remote_checksums):
+    # Extract just the digest part from the tuple
+    local_digest = local_digest_tuple[0]    
     remote_digest = remote_checksums.get(local_tag)
 
     if local_tag.count(':') > 1:
@@ -332,14 +364,16 @@ def push_image(local_tag, local_digest, remote_checksums):
 
     if local_digest != remote_digest:
         full_image_path = f"{azure_registry_name}/{local_tag}"
-        logging.info(f"Change detected - Local digest: {local_digest}, Remote digest: {remote_digest} for image: {full_image_path}")
+        logging.info(f"{local_tag}: Change detected - Local digest: {local_digest}, Remote digest: {remote_digest}")
         try:
-            docker_client.images.push(full_image_path)
-            logging.info(f"Successfully pushed image: {full_image_path}")
+            response = docker_client.api.push(full_image_path, stream=True, decode=True)
+            for line in response:
+                logging.debug(f"{local_tag}: {line}")
+            logging.info(f"{local_tag}: Successfully pushed image")
         except Exception as e:
-            logging.error(f"Error pushing image {full_image_path}: {e}")
+            logging.error(f"{local_tag}: Error pushing image: {e}")
     else:
-        logging.debug(f"No change detected for image: {local_tag}")
+        logging.debug(f"{local_tag}: No change detected")
 
 # Compare and pull images
 def update_images():
@@ -382,9 +416,25 @@ def upload_images():
     except KeyboardInterrupt:
         executor.shutdown(wait=False)
 
+    # Filter local images based on the provided argument
+    if args.repo:
+        local_checksums = {tag: digest for tag, digest in local_checksums.items() if tag.startswith(args.repo)}
+        logging.debug(f"Filtered local images (starting with '{args.repo}'): {list(local_checksums.keys())}")
+    else:
+        logging.debug("Processing all local images.")
+
+    # Additional block for date filtering
+    if cutoff_date:
+        local_checksums = {
+            tag: digest_tuple
+            for tag, digest_tuple in local_checksums.items()
+            if digest_tuple[1] >= cutoff_date  # digest_tuple[1] is the creation_date
+        }
+        logging.debug(f"Filtered local images (newer than {cutoff_date}): {list(local_checksums.keys())}")
+
     logging.info("Comparing images") 
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
             future_to_image = {
                 executor.submit(push_image, local_tag, local_digest, remote_checksums): local_tag
                 for local_tag, local_digest in local_checksums.items()
@@ -395,7 +445,7 @@ def upload_images():
                     # This will also raise any exceptions caught by push_image
                     future.result()
                 except Exception as e:
-                    logging.error(f"Error in pushing image {azure_tag}: {e}")
+                    logging.error(f"Error in pushing image {local_tag}: {e}")
     except KeyboardInterrupt:
         executor.shutdown(wait=False)
 
