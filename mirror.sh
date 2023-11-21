@@ -417,7 +417,7 @@ server {
     server_name mirantis.azurecr.io;
 
     # Increase the client body size limit to handle large Docker image layers
-    client_max_body_size 1000M;
+    client_max_body_size 3000M;
 
     # SSL configuration
     ssl_certificate $IMAGES_DIR/certs/mirantis.azurecr.io.crt;
@@ -951,11 +951,8 @@ install_downloaded_packages() {
         # Check if package is already installed
         log "Installing package $PKG_NAME..."
 
-        # Temporarily disable 'set -e'
-        set +e
         dpkg -i "$pkg"
         local status=$?
-        set -e  # Re-enable 'set -e'
 
         # Check for error
         if [ $status -ne 0 ]; then
@@ -990,10 +987,9 @@ install_downloaded_packages() {
     done
 
     # Fix any broken dependencies
-    set +e
     apt-get -f install -y
     local status=$?
-    set -e
+
     if [ $status -ne 0 ]; then
         log "Error fixing broken dependencies"
         error_occurred=1
@@ -1029,7 +1025,13 @@ install_packages() {
 
 setup_airgap_server() {
     airgapserver=true
+    export DEBIAN_FRONTEND=noninteractive
+    set +e
+
     install_packages
+
+    set -e
+
     remove_custom_hosts_entries
     setup_dnsmasq
     update_ca_certificates
