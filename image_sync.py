@@ -434,7 +434,7 @@ def upload_images():
 
     logging.info("Comparing images") 
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
             future_to_image = {
                 executor.submit(push_image, local_tag, local_digest, remote_checksums): local_tag
                 for local_tag, local_digest in local_checksums.items()
