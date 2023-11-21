@@ -635,9 +635,9 @@ download_all_images() {
     download_pid=$!  # Capture PID of download.py
     
     if [ -n "$months" ]; then
-        python3 "$download_dir/image_sync.py" --months "$months" &>/tmp/image_sync_py.log &
+        python3 "$download_dir/image_sync.py" --months "$months" download &>/tmp/image_sync_py.log &
     else
-        python3 "$download_dir/image_sync.py" &>/tmp/image_sync_py.log &
+        python3 "$download_dir/image_sync.py" download &>/tmp/image_sync_py.log &
     fi
     image_sync_pid=$!  # Capture PID of image_sync.py
     
@@ -700,13 +700,13 @@ upload_all_images() {
     # Download the file and set execute permission
     wget "$file_url" -O "$download_dir/$file_name" && chmod +x "$download_dir/$file_name"
 
-    # Once pull_images.sh is completed, run push_images.sh
+    # Once pull_images.sh is completed, run image_sync.py
     log "Starting push_images.sh..."
-    bash "$download_dir/push_images.sh" &>/tmp/push_images_sh.log &
-    push_images_pid=$!  # Capture PID of apt-mirror
+    python3 "$download_dir/image_sync.py" upload &>/tmp/image_sync_upload_py.log &
+    push_images_pid=$!  # Capture PID
 
     # Spinner for push_images.sh
-    log "Waiting for push_images.sh to complete..."
+    log "Waiting for push_images to complete..."
     spinner="/|\\-/|\\-"
     while kill -0 $push_images_pid 2>/dev/null; do
         for i in `seq 0 7`; do
@@ -722,11 +722,11 @@ upload_all_images() {
     log "Checking log files for errors..."
 
     # Check /tmp/apt_mirror.log
-    check_log_for_errors "/tmp/push_images_sh.log"
+    check_log_for_errors "/tmp/image_sync_upload_py.log"
     if [ $? -eq 0 ]; then
-        log "No errors found in /tmp/push_images_sh.log."
+        log "No errors found in /tmp/image_sync_upload_py.log."
     else
-        log "Error found in /tmp/push_images_sh.log, exiting"
+        log "Error found in /tmp/image_sync_upload_py.log, exiting"
         exit 1
     fi    
 
@@ -959,14 +959,18 @@ setup_airgap_server() {
 }    
 
 setup_mirror_server() {
+    local skip_create_lv=$1
+
     # Remove custom hosts entries
     remove_custom_hosts_entries
 
     # Check dependencies
     check_dependencies
 
-    # Setup storage
-    create_lv
+    # Setup storage, skip if flag is set
+    if [ "$skip_create_lv" != "usb" ]; then
+        create_lv
+    fi
 
     # Setup DNS server
     setup_dnsmasq
@@ -1035,6 +1039,8 @@ case "$1" in
             exit 1
         fi
         version="$2"
+        skip_create_lv_flag="$3"
+        
         [ "$1" = "setup-mirror-server" ] && setup_mirror_server
         [ "$1" = "init" ] && { setup_mirror_server; sync_images; }
         ;;
