@@ -1,27 +1,37 @@
-Copy mirror.sh onto image cache server, make executable and run
+# Mirror.sh Script Installation and Execution Guide
 
-It will download the other scripts from this repo
+## Overview
+This guide details the process for using the `mirror.sh` script on image cache servers. The script is designed for use on Equinix Metal s3.xlarge.86 servers running Ubuntu 20.04.
 
-It's safe to run this script multiple times if errors are encountered downloading images
+## Steps for Use
 
-This script was intended to be run on Equinix Metal s3.xlarge.86 servers on Ubuntu 20.04
+### 1. Copying and Running the Script
+- Transfer `mirror.sh` to your image cache server.
+- Change the script's permissions to make it executable.
+- Execute the script. It will automatically download additional scripts from this repository.
 
-"Usage: $0 {setup-mirror-server|setup-airgap-server|download-images|upload-images|sync-images|init} <release_version>"
+### 2. Handling Errors
+- If you encounter errors during image downloads, it is safe to re-run the script multiple times.
 
-<release_version> is only required for setup-mirror-server and init
+### 3. Usage Instructions
+- Command format: `$0 [command] <release_version>`
+- Example: `./mirror.sh setup-mirror-server 17.0.0`
+- Note: The `<release_version>` argument is only necessary for `setup-mirror-server` and `init` commands.
 
-- setup-mirror-server: configure the mirror server
-- setup-airgap-server: install packages on airgap server
-- download-images: sync download of images from online to local cache
-- upload-images: upload docker images to local registry
-- sync-images: perform download-images and then upload-images
-- init: perform setup-mirror-server and then sync-images
+### 4. Commands
+- `setup-mirror-server`: Configures the mirror server.
+- `setup-airgap-server`: Installs necessary packages on the airgap server.
+- `download-images`: Synchronizes the download of images from online to the local cache.
+- `upload-images`: Uploads Docker images to the local registry.
+- `sync-images`: Executes both `download-images` and `upload-images`.
+- `init`: Runs `setup-mirror-server` followed by `sync-images`.
 
-The intention is you mount a 4TB USB drive on your mirror-server to /images
+### 5. Storage Configuration
+- Attach a 4TB USB drive to your mirror server at the `/images` mount point.
+- After synchronization is complete, you may shut down the server and disconnect the drive.
 
-Once every thing is sync'd you can shutdown server and disconnect drive.
+### 6. Setting Up the Airgap Server
+- Attach the same USB drive to the airgap server at the `/images` mount point.
+- Run `/images/mirror.sh setup-airgap-server` for configuration.
+- Once configured, use the airgap server as the proxy in MCC/MOSK installations.
 
-On the airgap server, you can mount the same USB drive to /images and then run
-/images/mirror.sh setup-airgap-server and you should be good to go.
-
-Now you just configure the airgap server as the proxy in MCC/MOSK installs.
