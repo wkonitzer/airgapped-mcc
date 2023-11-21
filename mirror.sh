@@ -600,6 +600,8 @@ download_all_images() {
     # Define the directory where the files will be downloaded
     download_dir="$IMAGES_DIR"
 
+    local months="$1"
+
     # File URLs to download
     declare -A files=(
         ["download.py"]="https://raw.githubusercontent.com/wkonitzer/airgapped-mcc/main/download.py"
@@ -614,10 +616,18 @@ download_all_images() {
     # Run download.py, pull_images.sh, and apt-mirror in parallel
     log "Starting download.py, image_sync.py, and apt-mirror in parallel..."
     
-    python3 "$download_dir/download.py" &>/tmp/download_py.log &
+    if [ -n "$months" ]; then
+        python3 "$download_dir/download.py" --months "$months" &>/tmp/download_py.log &
+    else
+        python3 "$download_dir/download.py" &>/tmp/download_py.log &
+    fi
     download_pid=$!  # Capture PID of download.py
     
-    python3 "$download_dir/image_sync.py" &>/tmp/image_sync_py.log &
+    if [ -n "$months" ]; then
+        python3 "$download_dir/image_sync.py" --months "$months" &>/tmp/image_sync_py.log &
+    else
+        python3 "$download_dir/image_sync.py" &>/tmp/image_sync_py.log &
+    fi
     image_sync_pid=$!  # Capture PID of image_sync.py
     
     /usr/bin/apt-mirror &>/tmp/apt_mirror.log &
@@ -682,10 +692,12 @@ upload_all_images() {
     # Once pull_images.sh is completed, run push_images.sh
     log "Starting push_images.sh..."
     bash "$download_dir/push_images.sh" &>/tmp/push_images_sh.log &
+    push_images_pid=$!  # Capture PID of apt-mirror
 
     # Spinner for push_images.sh
     log "Waiting for push_images.sh to complete..."
-    while kill -0 $! 2>/dev/null; do
+    spinner="/|\\-/|\\-"
+    while kill -0 $push_images_pid 2>/dev/null; do
         for i in `seq 0 7`; do
             printf "\r${spinner:$i:1}"
             sleep .1
@@ -980,7 +992,7 @@ download_images() {
     setup_azure_cli
 
     # Download images
-    download_all_images
+    download_all_images "$months"
 }
 
 upload_images() {
@@ -1017,6 +1029,7 @@ case "$1" in
         setup_airgap_server
         ;;    
     download-images)
+        months="$2"
         download_images
         ;;
     upload-images)
