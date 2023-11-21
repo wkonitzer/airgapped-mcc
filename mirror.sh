@@ -736,7 +736,7 @@ setup_etc_hosts() {
     log "Configuring /etc/hosts..."
 
     # Add a marker before script's entries
-    log "# BEGIN Custom Script Entries" >> /etc/hosts    
+    echo "# BEGIN Custom Script Entries" >> /etc/hosts    
 
     while IFS= read -r line; do
         # Extract the IP address and domain from each line
@@ -752,13 +752,13 @@ setup_etc_hosts() {
                 sed -i "/\s$domain/c\\$ip $domain" /etc/hosts
             else
                 log "Adding $domain to /etc/hosts..."
-                log "$ip $domain" >> /etc/hosts
+                echo "$ip $domain" >> /etc/hosts
             fi
         fi
     done < "$config_file"
 
     # Add a marker after script's entries
-    log "# END Custom Script Entries" >> /etc/hosts    
+    echo "# END Custom Script Entries" >> /etc/hosts    
 
     log "/etc/hosts updated"
 }
