@@ -906,7 +906,11 @@ create_client_install() {
 
     # Download docker and its dependencies
     log "Downloading docker"
-    download_package "docker.io" "$DOWNLOAD_DIR"    
+    download_package "docker.io" "$DOWNLOAD_DIR"
+
+    # Download dnsmasq and its dependencies
+    log "Downloading dnsmasq"
+    download_package "dnsmasq" "$DOWNLOAD_DIR"       
 
     log "All packages downloaded to $DOWNLOAD_DIR" 
 
@@ -918,36 +922,114 @@ create_client_install() {
 
 # Function to install packages from a directory
 install_downloaded_packages() {
+    local error_occurred=0
+
     # Directory where the downloaded packages are stored
     DOWNLOAD_DIR="$IMAGES_DIR/downloaded_packages"
+
+    # Check if the download directory exists
+    if [ ! -d "$DOWNLOAD_DIR" ]; then
+        log "Download directory does not exist: $DOWNLOAD_DIR"
+        return 1
+    fi
 
     # Change to the directory containing the downloaded packages
     pushd "$DOWNLOAD_DIR" > /dev/null
 
-    # Loop through all .deb files and install them if not already installed
+    # Check if there are any .deb files to install
+    if [ -z "$(ls *.deb 2> /dev/null)" ]; then
+        log "No .deb files found in $DOWNLOAD_DIR"
+        popd > /dev/null
+        return 1
+    fi
+
+    # Loop through all .deb files and install them
     for pkg in *.deb; do
         # Extract package name from .deb file
         PKG_NAME=$(dpkg-deb -f "$pkg" Package)
 
         # Check if package is already installed
-        if dpkg -l | grep -qw "$PKG_NAME"; then
-            log "Package $PKG_NAME is already installed. Skipping..."
-        else
-            log "Installing package $PKG_NAME..."
-            dpkg -i "$pkg"
+        log "Installing package $PKG_NAME..."
+
+        # Temporarily disable 'set -e'
+        set +e
+        dpkg -i "$pkg"
+        local status=$?
+        set -e  # Re-enable 'set -e'
+
+        # Check for error
+        if [ $status -ne 0 ]; then
+            log "Error installing package $PKG_NAME. Attempting to resolve..."
+
+            # Specific check for 'chrony' and 'time-daemon' conflict
+            if dpkg -i "$pkg" 2>&1 | grep -q "chrony conflicts with time-daemon"; then
+                log "Unable to install 'chrony' due to conflict with 'time-daemon'. Removing the 'chrony' package file."
+                rm -f "$pkg"
+                continue  # Skip to the next package
+            fi
+
+            # Check for specific 'conflicting packages' error
+            if dpkg -i "$pkg" 2>&1 | grep -q "conflicting packages"; then
+                # Extract the name of the conflicting package
+                local conflict_pkg=$(dpkg -i "$pkg" 2>&1 | sed -n 's/.*conflicts with \(.*\)/\1/p')
+                    
+                # Remove the conflicting package
+                apt-get remove -y "$conflict_pkg"
+                    
+                # Attempt to reinstall the package
+                dpkg -i "$pkg"
+                status=$?
+            fi
+
+            if [ $status -ne 0 ]; then
+                log "Error installing package $PKG_NAME after conflict resolution"
+                error_occurred=1
+                break  # Exit the loop on error
+            fi
         fi
     done
 
     # Fix any broken dependencies
-    apt-get -f install
+    set +e
+    apt-get -f install -y
+    local status=$?
+    set -e
+    if [ $status -ne 0 ]; then
+        log "Error fixing broken dependencies"
+        error_occurred=1
+    fi
 
     # Change back to the original directory
     popd > /dev/null
+
+    # Return the error flag
+    return $error_occurred
 }
+
+install_packages() {
+    local max_retries=10
+    local attempts=0
+
+    while [ $attempts -lt $max_retries ]; do
+        install_downloaded_packages
+        if [ $? -eq 0 ]; then
+            log "All packages installed successfully."
+            break
+        else
+            log "Retrying installation due to errors..."
+            attempts=$((attempts + 1))
+        fi
+    done
+
+    if [ $attempts -eq $max_retries ]; then
+        log "Failed to install all packages after $max_retries attempts."
+        exit 1
+    fi
+}    
 
 setup_airgap_server() {
     airgapserver=true
-    install_downloaded_packages
+    install_packages
     remove_custom_hosts_entries
     setup_dnsmasq
     update_ca_certificates
