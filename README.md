@@ -1,7 +1,9 @@
 # Mirror.sh Script Installation and Execution Guide
 
 ## Overview
-This guide details the process for using the `mirror.sh` script on image cache servers. The script is designed for use on Equinix Metal s3.xlarge.86 servers running Ubuntu 20.04.
+This guide details the process for using the `mirror.sh` script on image cache servers. The script was tested on Equinix Metal s3.xlarge.86 servers running Ubuntu 20.04. 
+
+For customer use, mount a 4TB USB drive to /images on a server running Ubuntu 20.04 and run "./mirror.sh init 17.0.0 usb" to create your mirror files to take onsite.
 
 ## Steps for Use
 
@@ -17,6 +19,7 @@ This guide details the process for using the `mirror.sh` script on image cache s
 - Command format: `$0 [command] <release_version>`
 - Example: `./mirror.sh setup-mirror-server 17.0.0`
 - Note: The `<release_version>` argument is only necessary for `setup-mirror-server` and `init` commands.
+- `init` and `setup-mirror-server` take an optional 3rd parameter `usb` to skip lvm creation. The intent is you would mount your usb drive (4TB) to /images
 
 ### 4. Commands
 - `setup-mirror-server`: Configures the mirror server.
@@ -36,7 +39,7 @@ This guide details the process for using the `mirror.sh` script on image cache s
 - Once configured, use the airgap server as the proxy in MCC/MOSK installations.
 
 ### Notes
-By default it syncs 12 months of images from Azure and the binary CDN delivery network, but you can add a <month> parameter to download-images to change that.
+By default it syncs 12 months of images from Azure and the binary CDN delivery network, but you can add a <month> parameter to `download-images`, `upload-images` or `sync-images`  to change that.
 e.g. ./mirror.sh download-images 6
 for 6 months worth of images.
 
