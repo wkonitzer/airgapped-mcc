@@ -700,6 +700,8 @@ upload_all_images() {
     # Define the directory where script will be downloaded
     download_dir="$IMAGES_DIR"
 
+    local months="$1"
+
     # URL and filename
     file_url="https://raw.githubusercontent.com/wkonitzer/airgapped-mcc/main/image_sync.py"
     file_name="image_sync.py"
@@ -718,13 +720,18 @@ upload_all_images() {
 
     # Once pull_images.sh is completed, run image_sync.py
     log "Starting push_images.sh..."
-    python3 "$download_dir/image_sync.py" upload &>/tmp/image_sync_upload_py.log &
-    push_images_pid=$!  # Capture PID
+
+    if [ -n "$months" ]; then
+        python3 "$download_dir/image_sync.py" --months "$months" upload &>/tmp/image_sync_upload_py.log &
+    else
+        python3 "$download_dir/image_sync.py" upload &>/tmp/image_sync_upload_py.log &
+    fi
+    image_sync_pid=$!  # Capture PID of image_sync.py
 
     # Spinner for push_images.sh
     log "Waiting for push_images to complete..."
     spinner="/|\\-/|\\-"
-    while kill -0 $push_images_pid 2>/dev/null; do
+    while kill -0 $image_sync_pid 2>/dev/null; do
         for i in `seq 0 7`; do
             printf "\r${spinner:$i:1}"
             sleep .1
@@ -1119,7 +1126,7 @@ upload_images() {
     setup_etc_hosts
 
     # Upload images
-    upload_all_images
+    upload_all_images "$months"
 }
 
 sync_images() {
@@ -1152,9 +1159,11 @@ case "$1" in
         download_images
         ;;
     upload-images)
+        months="$2"
         upload_images
         ;;
     sync-images)
+        months="$2"
         sync_images
         ;;
     *)
