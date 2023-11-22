@@ -19,7 +19,7 @@ For customer use, mount a 4TB USB drive to /images on a server running Ubuntu 20
 - Command format: `$0 [command] <release_version>`
 - Example: `./mirror.sh setup-mirror-server 17.0.0`
 - Note: The `<release_version>` argument is only necessary for `setup-mirror-server` and `init` commands.
-- `init` and `setup-mirror-server` take an optional 3rd parameter `usb` to skip lvm creation. The intent is you would mount your usb drive (4TB) to /images
+- `init` and `setup-mirror-server` take an optional 3rd parameter `usb` to skip lvm creation. The intent is you would mount your usb drive (4TB) to `/images`
 
 ### 4. Commands
 - `setup-mirror-server`: Configures the mirror server.
@@ -40,6 +40,6 @@ For customer use, mount a 4TB USB drive to /images on a server running Ubuntu 20
 
 ### Notes
 By default it syncs 12 months of images from Azure and the binary CDN delivery network, but you can add a <month> parameter to `download-images`, `upload-images` or `sync-images`  to change that.
-e.g. ./mirror.sh download-images 6
+e.g. `./mirror.sh download-images 6`
 for 6 months worth of images.
 
