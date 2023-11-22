@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+# version 0.1
 import os
 import subprocess
 import docker
