@@ -619,10 +619,17 @@ download_all_images() {
         ["image_sync.py"]="https://raw.githubusercontent.com/wkonitzer/airgapped-mcc/main/image_sync.py"
     )
 
+    # Change to the download directory
+    pushd "$IMAGES_DIR" > /dev/null
+
     # Download the files
     for file in "${!files[@]}"; do
-        wget "${files[$file]}" -O "$download_dir/$file" && chmod +x "$download_dir/$file"
+        wget -N "${files[$file]}"
+        chmod +x "$file"
     done
+
+    # Change back to the original directory
+    popd > /dev/null
 
     # Run download.py, pull_images.sh, and apt-mirror in parallel
     log "Starting download.py, image_sync.py, and apt-mirror in parallel..."
@@ -694,11 +701,20 @@ upload_all_images() {
     download_dir="$IMAGES_DIR"
 
     # URL and filename
-    file_url="https://raw.githubusercontent.com/wkonitzer/airgapped-mcc/main/push_images.sh"
-    file_name="push_images.sh"
+    file_url="https://raw.githubusercontent.com/wkonitzer/airgapped-mcc/main/image_sync.py"
+    file_name="image_sync.py"
 
-    # Download the file and set execute permission
-    wget "$file_url" -O "$download_dir/$file_name" && chmod +x "$download_dir/$file_name"
+    # Change to the download directory
+    pushd "$IMAGES_DIR" > /dev/null 
+
+    # Download the file only if it has been updated on the server
+    wget -N "$file_url"
+
+    # set execute permission
+    chmod +x "$file_name"
+
+    # Change back to the original directory
+    popd > /dev/null
 
     # Once pull_images.sh is completed, run image_sync.py
     log "Starting push_images.sh..."

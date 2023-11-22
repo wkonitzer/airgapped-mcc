@@ -37,6 +37,9 @@ parser.add_argument('--loglevel', default='INFO', choices=['DEBUG', 'INFO', 'WAR
 parser.add_argument('--months', type=int, default=12, help='Number of months to consider for updating images')
 args = parser.parse_args()
 
+# Determine if the --months argument was specified by the user
+months_specified = args.months != 12  # Assuming 12 is the default value
+
 # Set the CA bundle for SSL certificate verification
 os.environ['REQUESTS_CA_BUNDLE'] = '/etc/ssl/certs/ca-certificates.crt'
 
@@ -419,7 +422,7 @@ def upload_images():
     # Filter local images based on the provided argument
     if args.repo:
         local_checksums = {tag: digest for tag, digest in local_checksums.items() if tag.startswith(args.repo)}
-        logging.debug(f"Filtered local images (starting with '{args.repo}'): {list(local_checksums.keys())}")
+        logging.info(f"Filtered local images (starting with '{args.repo}'): {list(local_checksums.keys())}")
     else:
         logging.debug("Processing all local images.")
 
@@ -428,13 +431,17 @@ def upload_images():
         local_checksums = {
             tag: digest_tuple
             for tag, digest_tuple in local_checksums.items()
-            if digest_tuple[1] >= cutoff_date  # digest_tuple[1] is the creation_date
+            if tag.split(':')[0] in SPECIFIC_REPOS or digest_tuple[1] >= cutoff_date
         }
-        logging.debug(f"Filtered local images (newer than {cutoff_date}): {list(local_checksums.keys())}")
+        if months_specified:    
+            logging.info(f"Filtered local images (newer than {cutoff_date} and not in SPECIFIC_REPOS): {list(local_checksums.keys())}")
+        else:
+            logging.debug(f"Filtered local images (newer than {cutoff_date} and not in SPECIFIC_REPOS): {list(local_checksums.keys())}")
+
 
     logging.info("Comparing images") 
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
             future_to_image = {
                 executor.submit(push_image, local_tag, local_digest, remote_checksums): local_tag
                 for local_tag, local_digest in local_checksums.items()
