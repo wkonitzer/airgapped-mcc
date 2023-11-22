@@ -3,7 +3,7 @@
 ## Overview
 This guide details the process for using the `mirror.sh` script on image cache servers. The script was tested on Equinix Metal s3.xlarge.86 servers running Ubuntu 20.04. 
 
-For customer use, mount a 4TB USB drive to /images on a server running Ubuntu 20.04 and run "./mirror.sh init 17.0.0 usb" to create your mirror files to take onsite.
+For customer use, mount a 4TB USB drive to /images on a server running Ubuntu 20.04 and run ``./mirror.sh init 17.0.0 usb` to create your mirror files to take onsite.
 
 ## Steps for Use
 
