@@ -49,6 +49,9 @@ if [ "$operation" != "setup-airgap-server" ]; then
     fi
 fi
 
+# See https://mirantis.jira.com/wiki/spaces/NG/pages/1891926183/CDN+Mirrors+and+structure+of+repositories
+# for Azure readonly credentials
+
 # Check if Logical Volume already exists
 lv_exists() {
     lvdisplay /dev/images/images > /dev/null 2>&1
