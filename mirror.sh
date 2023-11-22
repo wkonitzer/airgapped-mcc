@@ -719,7 +719,7 @@ upload_all_images() {
     popd > /dev/null
 
     # Once pull_images.sh is completed, run image_sync.py
-    log "Starting push_images.sh..."
+    log "Starting image_sync upload"
 
     if [ -n "$months" ]; then
         python3 "$download_dir/image_sync.py" --months "$months" upload &>/tmp/image_sync_upload_py.log &
@@ -729,7 +729,7 @@ upload_all_images() {
     image_sync_pid=$!  # Capture PID of image_sync.py
 
     # Spinner for push_images.sh
-    log "Waiting for push_images to complete..."
+    log "Waiting for image_sync to complete..."
     spinner="/|\\-/|\\-"
     while kill -0 $image_sync_pid 2>/dev/null; do
         for i in `seq 0 7`; do
