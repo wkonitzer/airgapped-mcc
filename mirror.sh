@@ -29,25 +29,25 @@ fi
 operation="$1"
 
 # Perform checks only if the operation is not 'setup-airgap-server'
-#if [ "$operation" != "setup-airgap-server" ]; then
-#    # Check if running inside a screen session
-#    if [ -z "$STY" ]; then
-#        log "This script is not running inside a screen session."
-#        log "Please run this script inside a screen session."
-#        exit 1
-#    fi
+if [ "$operation" != "setup-airgap-server" ]; then
+    # Check if running inside a screen session
+    if [ -z "$STY" ]; then
+        log "This script is not running inside a screen session."
+        log "Please run this script inside a screen session."
+        exit 1
+    fi
 
     # Check for AZURE_USER and AZURE_PASSWORD environment variables
-#    if [[ -z "${AZURE_USER}" ]]; then
-#        log "Environment variable AZURE_USER is not set. Please set it and try again."
-#        exit 1
-#    fi
+    if [[ -z "${AZURE_USER}" ]]; then
+        log "Environment variable AZURE_USER is not set. Please set it and try again."
+        exit 1
+    fi
 
-#    if [[ -z "${AZURE_PASSWORD}" ]]; then
-#        log "Environment variable AZURE_PASSWORD is not set. Please set it and try again."
-#        exit 1
-#    fi
-#fi
+    if [[ -z "${AZURE_PASSWORD}" ]]; then
+        log "Environment variable AZURE_PASSWORD is not set. Please set it and try again."
+        exit 1
+    fi
+fi
 
 # Check if Logical Volume already exists
 lv_exists() {
