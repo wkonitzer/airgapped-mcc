@@ -164,6 +164,7 @@ def process_url(url, local_path):
 if __name__ == "__main__":
     try:
         process_url(base_url, output_dir)
+        logging.info("Finished downloading images.")
         driver.quit()
     except KeyboardInterrupt:
         logging.error("Interrupted by user. Exiting...")
