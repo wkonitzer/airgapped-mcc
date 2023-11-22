@@ -38,6 +38,10 @@ For customer use, mount a 4TB USB drive to /images on a server running Ubuntu 20
 - Run `/images/mirror.sh setup-airgap-server` for configuration.
 - Once configured, use the airgap server as the proxy in MCC/MOSK installations.
 
+### 7. Logs
+- Logs are written to `/tmp`
+- Debug logging is available in the dependency scripts (`download.py` and `image-sync.py`) if you need to run them manually
+
 ### Notes
 By default it syncs 12 months of images from Azure and the binary CDN delivery network, but you can add a <month> parameter to `download-images`, `upload-images` or `sync-images`  to change that.
 e.g. `./mirror.sh download-images 6`
