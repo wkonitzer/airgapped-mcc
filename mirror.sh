@@ -378,6 +378,7 @@ update_ca_certificates() {
 setup_nginx() {
     log "Setup Nginx"
     mkdir -p /etc/nginx/conf.d/
+    mkdir -p /var/log/nginx
 
     # Configure nginx for each domain in /etc/dnsmasq.d/local-mirror.conf, except for mirantis.azurecr.io
     echo "" > /etc/nginx/conf.d/default.conf
@@ -465,7 +466,7 @@ server {
 
     # Proxy to your Docker registry
     location / {
-        proxy_pass http://localhost:5000;
+        proxy_pass http://registry:5000;
         proxy_set_header Host \$http_host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -1336,11 +1337,11 @@ case "$1" in
 
         skip_create_lv_flag="$3"
 
-        # Check if skip_create_lv_flag is set to "usb"
-        if [ "$skip_create_lv_flag" != "usb" ]; then
-            log "Error: The third argument must be 'usb'."
+        # Proceed only if the third argument is provided and not equal to 'usb'
+        if [ -n "$3" ] && [ "$3" != "usb" ]; then
+            log "Error: When provided, the third argument must be 'usb'."
             exit 1
-        fi        
+        fi       
         
         [ "$1" = "setup-mirror-server" ] && setup_mirror_server
         [ "$1" = "init" ] && { setup_mirror_server; sync_images; }
