@@ -323,6 +323,9 @@ create_certificates() {
 
     # Create certs directory
     mkdir -p "$certs_dir"
+
+    # Save current directory
+    local original_dir=$(pwd)    
     cd "$certs_dir"
 
     # Generate CA key and certificate only if they don't already exist
@@ -356,6 +359,9 @@ EOM
         # Sign the CSR with the CA certificate
         openssl x509 -req -in "$domain.csr" -CA myCA.pem -CAkey myCA.key -CAcreateserial -out "$domain.crt" -days 825 -sha256 -extfile "$domain.ext"
     done
+
+    # Change back to the original directory
+    cd "$original_dir"
 }
 
 # Update the ca certificates
@@ -370,35 +376,17 @@ update_ca_certificates() {
 
 # Function to setup Nginx
 setup_nginx() {
-    # Check if the airgapserver flag is set
-    if [ "$airgapserver" = true ]; then
-        log "Airgap server mode is enabled. Checking if nginx is installed..."
-
-        # Check if nginx is installed
-        if ! command -v nginx >/dev/null 2>&1; then
-            log "Error: nginx is not installed. Please install it manually."
-            exit 1
-        else
-            log "nginx is already installed."
-        fi
-    else
-        # If not in airgap server mode, install nginx if it's not already installed
-        if ! command -v nginx >/dev/null 2>&1; then
-            log "Installing nginx..."
-            apt-get install -y nginx
-        else
-            log "nginx is already installed."
-        fi
-    fi
+    log "Setup Nginx"
+    mkdir -p /etc/nginx/conf.d/
 
     # Configure nginx for each domain in /etc/dnsmasq.d/local-mirror.conf, except for mirantis.azurecr.io
-    echo "" > /etc/nginx/conf.d/mirrors.conf
+    echo "" > /etc/nginx/conf.d/default.conf
     while IFS= read -r line; do
         domain=$(log "$line" | awk -F '/' '{print $2}')
     
         # Skip mirantis.azurecr.io and binary.mirantis.com
         if [ "$domain" != "mirantis.azurecr.io" ] && [ "$domain" != "binary.mirantis.com" ]; then
-            cat << EOF >> /etc/nginx/conf.d/mirrors.conf
+            cat << EOF >> /etc/nginx/conf.d/default.conf
 server {
     listen 443 ssl;
     server_name $domain;
@@ -432,7 +420,7 @@ EOF
 
     # Specific configuration for binary.mirantis.com
     domain="binary.mirantis.com"
-    cat << EOF >> /etc/nginx/conf.d/mirrors.conf
+    cat << EOF >> /etc/nginx/conf.d/default.conf
 server {
     listen 443 ssl;
     server_name $domain;
@@ -463,7 +451,7 @@ server {
 EOF
 
     # Add additional server block for Docker registry
-    cat << EOF >> /etc/nginx/conf.d/mirrors.conf
+    cat << EOF >> /etc/nginx/conf.d/default.conf
 server {
     listen 443 ssl;
     server_name mirantis.azurecr.io;
@@ -477,7 +465,7 @@ server {
 
     # Proxy to your Docker registry
     location / {
-        proxy_pass http://localhost:5001;
+        proxy_pass http://localhost:5000;
         proxy_set_header Host \$http_host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -490,28 +478,125 @@ server {
 }
 EOF
 
-    # Test nginx configuration
-    if nginx -t; then
-        # Restart Nginx to apply new configuration
-        systemctl restart nginx
-        log "Nginx configuration is valid and the service has been restarted."
+    local container_name="my-nginx"
+    local running_container
+    local stopped_container
+
+    log "Creating nginx container"
+
+    # Check if the container is already running
+    running_container=$(docker ps -q -f name=^/my-nginx$)
+    stopped_container=$(docker ps -aq -f status=exited -f name=^/my-nginx$)
+    if [ -n "$running_container" ]; then
+        log "Container $container_name is already running. Stopping and removing it..."
+        docker stop "$container_name"
+        docker rm "$container_name"
+    elif [ -n "$stopped_container" ]; then
+        log "Container $container_name exists but is stopped. Removing it..."
+        docker rm "$container_name"
+    fi
+
+    log "Starting new $container_name container..."
+
+    # Start the new container
+    docker run --name "$container_name" -p 80:80 -p 443:443 \
+        -v /etc/nginx/conf.d:/etc/nginx/conf.d \
+        -v /var/log/nginx:/var/log/nginx \
+        -v /images/certs:/images/certs \
+        --restart always -d nginx
+
+    create_docker_network
+    connect_to_network "my-nginx"
+    connect_to_network "registry"
+}
+
+# Function to create a Docker network if it doesn't already exist
+create_docker_network() {
+    local network_name="my-network"
+
+    # Check if the network already exists
+    if docker network ls --format "{{.Name}}" | grep -wq "^${network_name}$"; then
+        echo "Network '${network_name}' already exists."
     else
-        log "Error in Nginx configuration. Please check the configuration file."
-        return 1
+        echo "Creating Docker network: ${network_name}"
+        docker network create "${network_name}"
     fi
 }
 
-# Function to install Docker and setup a local registry
+# Connect containers to network
+connect_to_network() {
+    local network_name="my-network"
+    local container_name="$1"
+
+    # Check if the container is already connected to the network
+    if docker network inspect "$network_name" --format '{{json .Containers}}' | grep -q "$container_name"; then
+        echo "Container '$container_name' is already connected to the network '$network_name'."
+    else
+        echo "Connecting '$container_name' to the network '$network_name'."
+        docker network connect "$network_name" "$container_name"
+    fi
+}
+
+download_mcr() {
+    log "Download and install MCR"
+    local cluster_release=$1
+    local yaml_url="https://binary.mirantis.com/releases/cluster/${cluster_release}.yaml"
+    local yaml_file="/tmp/${cluster_release}.yaml"
+    local version_number
+    local version
+    local containerd
+    TEMP_DIR=$(mktemp -d)
+
+    # Download the YAML file
+    log "Downloading YAML file for cluster release ${cluster_release}..."
+    if ! wget -O "$yaml_file" "$yaml_url"; then
+        log "Failed to download YAML file. Exiting."
+        exit 1
+    fi
+
+    version_number=$(grep 'mcr:' "$yaml_file" | awk '{print $2}' | cut -d '.' -f1-2)
+    version=$(grep 'mcr:' "$yaml_file" | awk '{print $2}') 
+    containerd=$(grep 'containerd_version_map:' "$yaml_file" | awk -F'[ ,}]' '{for(i=1;i<=NF;i++) if($i=="Debian:") {print $(i+1); exit}}' | tr -d '\n')
+
+    local download_dir="$IMAGES_DIR/downloaded_packages/"
+    mkdir -p "$download_dir"
+
+    # Save current directory
+    local original_dir=$(pwd)
+
+    # Change to download directory
+    cd "$TEMP_DIR" || exit
+
+    wget "https://repos.mirantis.com/ubuntu/dists/focal/pool/stable-$version_number/amd64/docker-ee_$version~3-0~ubuntu-focal_amd64.deb" \
+         "https://repos.mirantis.com/ubuntu/dists/focal/pool/stable-$version_number/amd64/docker-ee-cli_$version~3-0~ubuntu-focal_amd64.deb" \
+         "https://repos.mirantis.com/ubuntu/dists/focal/pool/stable-$version_number/amd64/containerd.io_$containerd-1_amd64.deb" || {
+        log "Failed to download packages. Exiting."
+        cd "$original_dir"
+        exit 1
+    }
+
+    dpkg -i *.deb || {
+        log "Failed to install packages. Exiting."
+        cd "$original_dir"
+        exit 1
+    }
+
+    mv *.deb "$download_dir/"
+
+    # Change back to the original directory
+    cd "$original_dir"
+}
+
+# Function to setup a local registry
 setup_docker_registry() {
-    # Install Docker and jq
-    apt-get install -y docker.io jq
+    log "Setup docker"
 
     # Configure Docker to use a custom data directory
     mkdir -p /etc/docker
     mkdir -p $IMAGES_DIR/docker/data/directory
 
     # Creating /etc/docker/daemon.json with the custom data directory
-    jq -n --arg dataRoot "$IMAGES_DIR/docker/data/directory" '{"data-root": $dataRoot}' > /etc/docker/daemon.json
+    printf '{\n  "data-root": "%s"\n}\n' "$IMAGES_DIR/docker/data/directory" > /etc/docker/daemon.json
 
     # Restart Docker to apply new configuration
     log "Restarting docker..this may take some time."
@@ -534,6 +619,7 @@ setup_docker_registry() {
 }
 
 setup_python_extras() {
+    log "Installing Python packages"
     # install pip3
     apt install python3-pip -y
 
@@ -624,8 +710,8 @@ install_and_configure_tinyproxy() {
 Description=Restart tinyproxy every 3 hours
 
 [Timer]
-OnBootSec=3h
-OnUnitActiveSec=3h
+OnBootSec=1h
+OnUnitActiveSec=1h
 Unit=tinyproxy.service
 
 [Install]
@@ -860,8 +946,39 @@ remove_custom_hosts_entries() {
     fi
 }
 
+disable_ipv6() {
+    local config_file="/etc/sysctl.conf"
+    local ipv6_disabled="net.ipv6.conf.all.disable_ipv6 = 1"
+    local ipv6_default_disabled="net.ipv6.conf.default.disable_ipv6 = 1"
+    local ipv6_loopback_disabled="net.ipv6.conf.lo.disable_ipv6 = 1"
+
+    echo "Disabling IPv6..."
+
+    # Function to append a line if it's not present in the file
+    append_if_not_exists() {
+        local line="$1"
+        local file="$2"
+        if ! grep -qF -- "$line" "$file"; then
+            echo "$line" | sudo tee -a "$file" > /dev/null
+            echo "Appended '$line' to $file"
+        else
+            echo "'$line' is already present in $file"
+        fi
+    }
+
+    # Append IPv6 disable settings to /etc/sysctl.conf if not present
+    append_if_not_exists "$ipv6_disabled" "$config_file"
+    append_if_not_exists "$ipv6_default_disabled" "$config_file"
+    append_if_not_exists "$ipv6_loopback_disabled" "$config_file"
+
+    # Reload sysctl settings
+    sudo sysctl -p
+
+    echo "IPv6 has been disabled."
+}
+
 check_dependencies() {
-    local dependencies=("wget" "jq" "openssl" "apt-rdepends")
+    local dependencies=("wget" "openssl" "apt-rdepends")
     local missing_deps=()
 
     for dep in "${dependencies[@]}"; do
@@ -967,21 +1084,12 @@ create_client_install() {
     DOWNLOAD_DIR="$IMAGES_DIR/downloaded_packages"
     mkdir -p "$DOWNLOAD_DIR"
 
-    # Download Nginx and its dependencies
-    log "Downloading nginx"
-    download_package "nginx" "$DOWNLOAD_DIR"
-
     # Download Tinyproxy and its dependencies
     log "Downloading tinyproxy"
     download_package "tinyproxy" "$DOWNLOAD_DIR"
 
-    # Download jq and its dependencies
-    log "Downloading jq"
-    download_package "jq" "$DOWNLOAD_DIR"
-
-    # Download docker and its dependencies
-    log "Downloading docker"
-    download_package "docker.io" "$DOWNLOAD_DIR"
+    # Download MCR ##
+    log "Downloading MCR"
 
     # Download dnsmasq and its dependencies
     log "Downloading dnsmasq"
@@ -1116,6 +1224,7 @@ install_packages() {
 setup_airgap_server() {
     airgapserver=true
     export DEBIAN_FRONTEND=noninteractive
+    disable_ipv6
     set +e
 
     install_packages
@@ -1125,8 +1234,8 @@ setup_airgap_server() {
     remove_custom_hosts_entries
     setup_dnsmasq
     update_ca_certificates
-    setup_nginx
     setup_docker_registry
+    setup_nginx    
     install_and_configure_tinyproxy
     setup_etc_hosts
     log "Airgap server setup complete."
@@ -1137,6 +1246,9 @@ setup_mirror_server() {
 
     # Remove custom hosts entries
     remove_custom_hosts_entries
+
+    # Disable ipv6
+    disable_ipv6
 
     # Check dependencies
     check_dependencies
@@ -1157,11 +1269,12 @@ setup_mirror_server() {
     create_certificates
     update_ca_certificates
 
+    # Setup docker registry
+    download_mcr "$version"
+    setup_docker_registry
+
     # Setup nginx
     setup_nginx
-
-    # Setup docker registry
-    setup_docker_registry
 
     # Setup python
     setup_python_extras
@@ -1213,7 +1326,21 @@ case "$1" in
             exit 1
         fi
         version="$2"
+
+        # Check if version contains only numbers and dots
+        if ! [[ $version =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+            log "Error: Invalid version format. Version should only contain numbers and dots."
+            log "Example of valid format: 17.0.0"
+            exit 1
+        fi
+
         skip_create_lv_flag="$3"
+
+        # Check if skip_create_lv_flag is set to "usb"
+        if [ "$skip_create_lv_flag" != "usb" ]; then
+            log "Error: The third argument must be 'usb'."
+            exit 1
+        fi        
         
         [ "$1" = "setup-mirror-server" ] && setup_mirror_server
         [ "$1" = "init" ] && { setup_mirror_server; sync_images; }
