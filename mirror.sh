@@ -396,9 +396,9 @@ setup_nginx() {
     while IFS= read -r line; do
         domain=$(log "$line" | awk -F '/' '{print $2}')
     
-        # Skip mirantis.azurecr.io
-        if [ "$domain" != "mirantis.azurecr.io" ]; then
-          cat << EOF >> /etc/nginx/conf.d/mirrors.conf
+        # Skip mirantis.azurecr.io and binary.mirantis.com
+        if [ "$domain" != "mirantis.azurecr.io" ] && [ "$domain" != "binary.mirantis.com" ]; then
+            cat << EOF >> /etc/nginx/conf.d/mirrors.conf
 server {
     listen 443 ssl;
     server_name $domain;
@@ -429,6 +429,38 @@ server {
 EOF
         fi
     done < /etc/dnsmasq.d/local-mirror.conf
+
+    # Specific configuration for binary.mirantis.com
+    domain="binary.mirantis.com"
+    cat << EOF >> /etc/nginx/conf.d/mirrors.conf
+server {
+    listen 443 ssl;
+    server_name $domain;
+
+    ssl_certificate $IMAGES_DIR/certs/$domain.crt;
+    ssl_certificate_key $IMAGES_DIR/certs/$domain.key;
+
+    # Custom root directory for binary.mirantis.com
+    root /images/binaries/;
+
+    location / {
+        autoindex on;
+    }
+
+    # Additional SSL settings
+    ssl_session_cache builtin:1000 shared:SSL:10m;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-CHACHA20-POLY1305';
+    ssl_prefer_server_ciphers on;
+}
+
+# Redirect HTTP to HTTPS
+server {
+    listen 80;
+    server_name $domain;
+    return 301 https://\$host\$request_uri;
+}
+EOF
 
     # Add additional server block for Docker registry
     cat << EOF >> /etc/nginx/conf.d/mirrors.conf
