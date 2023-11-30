@@ -28,8 +28,8 @@ fi
 # Get the first argument to determine the operation
 operation="$1"
 
-# Perform checks only if the operation is not 'setup-airgap-server'
-if [ "$operation" != "setup-airgap-server" ]; then
+# Function to perform initial checks
+perform_checks() {
     # Check if running inside a screen session
     if [ -z "$STY" ]; then
         log "This script is not running inside a screen session."
@@ -47,10 +47,27 @@ if [ "$operation" != "setup-airgap-server" ]; then
         log "Environment variable AZURE_PASSWORD is not set. Please set it and try again."
         exit 1
     fi
-fi
+}
 
 # See https://mirantis.jira.com/wiki/spaces/NG/pages/1891926183/CDN+Mirrors+and+structure+of+repositories
 # for Azure readonly credentials
+
+# Define the usage message
+USAGE_MESSAGE="Usage: $0 {setup-mirror-server|setup-airgap-server|download-images|upload-images|sync-images|init} <release_version>\ne.g. ./mirror.sh init 17.0.0"
+
+# Case statement for handling different operations
+case "$1" in
+    setup-mirror-server | init | setup-airgap-server | download-images | upload-images | sync-images)
+        # Perform checks only if the operation is not 'setup-airgap-server'
+        if [ "$1" != "setup-airgap-server" ]; then
+            perform_checks
+        fi
+        ;;
+    *)
+        echo -e "$USAGE_MESSAGE"
+        exit 1
+        ;;
+esac
 
 # Check if Logical Volume already exists
 lv_exists() {
@@ -1028,6 +1045,19 @@ install_downloaded_packages() {
     return $error_occurred
 }
 
+# Function to check if specific services are running
+check_services() {
+    log "Checking if services are running"
+    for service in nginx tinyproxy docker; do
+        log "Checking $service"
+        if ! systemctl is-active --quiet $service; then
+            log "Service $service is not running."
+            return 1
+        fi
+    done
+    log "All required services are running."
+}
+
 install_packages() {
     local max_retries=10
     local attempts=0
@@ -1045,9 +1075,11 @@ install_packages() {
 
     if [ $attempts -eq $max_retries ]; then
         log "Failed to install all packages after $max_retries attempts."
-        exit 1
+        
+        # Call the check_services function
+        check_services || exit 1
     fi
-}    
+}
 
 setup_airgap_server() {
     airgapserver=true
@@ -1170,8 +1202,7 @@ case "$1" in
         sync_images
         ;;
     *)
-        echo "Usage: $0 {setup-mirror-server|setup-airgap-server|download-images|upload-images|sync-images|init} <release_version>"
-        echo "e.g. ./mirror.sh init 17.0.0"
+        echo -e "$USAGE_MESSAGE"
         exit 1
         ;;
 esac
