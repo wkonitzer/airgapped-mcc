@@ -45,7 +45,7 @@ output_dir = "/images/binaries"
 processed_urls = set()
 
 # List of prefixes to ignore the 2023 check
-ignore_date_check_prefixes = ["stacklight/helm/"]
+ignore_date_check_prefixes = ["stacklight/helm/", "bm/stub"]
 
 # Configure the WebDriver
 options = webdriver.ChromeOptions()
