@@ -708,11 +708,11 @@ install_and_configure_tinyproxy() {
         log "Creating tinyproxy restart timer..."
         cat > "$timer_file" <<- EOF
 [Unit]
-Description=Restart tinyproxy every 10 minutes
+Description=Restart tinyproxy every 3 hours
 
 [Timer]
-OnBootSec=10min
-OnUnitActiveSec=10min
+OnBootSec=3h
+OnUnitActiveSec=3h
 Unit=tinyproxy.service
 
 [Install]
@@ -736,6 +736,70 @@ EOF
     fi
 }
 
+# Build updated Tiny proxy
+build_tinyproxy() {
+    log "Building tinyproxy"
+
+    # Install required packages
+    apt update
+    apt install -y git build-essential automake
+
+    # Clone the repository if it doesn't already exist
+    if [ ! -d "tinyproxy" ]; then
+        git clone https://github.com/tinyproxy/tinyproxy.git || { log "Failed to clone repository"; return 1; }
+    fi
+
+    # Build and install Tinyproxy
+    pushd tinyproxy
+    ./autogen.sh && ./configure && make
+    if [ $? -eq 0 ]; then
+        make install
+        cp /usr/local/bin/tinyproxy /images/downloaded_packages/
+        popd
+    else
+        log "Build failed"
+        popd
+        return 1
+    fi
+}
+
+fix_tinyproxy() {
+    log "Updating tinyproxy"
+
+    systemctl stop tinyproxy-restart.timer
+    systemctl stop tinyproxy
+
+    # Check if the new binary exists
+    if [ -f "/images/downloaded_packages/tinyproxy" ]; then
+
+        # Replace the binary
+        cp /images/downloaded_packages/tinyproxy /usr/bin/tinyproxy
+    else
+        log "New Tinyproxy binary not found."
+        return 1
+    fi
+
+    # Replace the systemd service file
+    bash -c 'cat > /lib/systemd/system/tinyproxy.service' << EOF
+[Unit]
+Description=Tinyproxy lightweight HTTP Proxy
+After=network.target
+Documentation=man:tinyproxy(8) man:tinyproxy.conf(5)
+
+[Service]
+Type=forking
+ExecStart=/usr/bin/tinyproxy -c /etc/tinyproxy/tinyproxy.conf
+PIDFile=/run/tinyproxy/tinyproxy.pid
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl start tinyproxy-restart.timer
+    systemctl start tinyproxy
+}
+   
 # Function to check log file for errors
 check_log_for_errors() {
     local log_file=$1
@@ -1239,6 +1303,7 @@ setup_airgap_server() {
     setup_nginx    
     install_and_configure_tinyproxy
     setup_etc_hosts
+    fix_tinyproxy
     log "Airgap server setup complete."
 }    
 
@@ -1285,6 +1350,8 @@ setup_mirror_server() {
 
     # Setup Tinyproxy
     install_and_configure_tinyproxy
+    build_tinyproxy
+    fix_tinyproxy
 
     # Copy packages for airgap server
     create_client_install
