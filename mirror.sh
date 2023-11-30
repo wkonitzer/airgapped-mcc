@@ -707,11 +707,11 @@ install_and_configure_tinyproxy() {
         log "Creating tinyproxy restart timer..."
         cat > "$timer_file" <<- EOF
 [Unit]
-Description=Restart tinyproxy every 3 hours
+Description=Restart tinyproxy every 10 minutes
 
 [Timer]
-OnBootSec=1h
-OnUnitActiveSec=1h
+OnBootSec=10min
+OnUnitActiveSec=10min
 Unit=tinyproxy.service
 
 [Install]
