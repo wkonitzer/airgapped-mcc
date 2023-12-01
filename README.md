@@ -5,6 +5,32 @@ This guide details the process for using the `mirror.sh` script on image cache s
 
 For customer use, mount a 4TB USB drive to /images on a server running Ubuntu 20.04 and run `./mirror.sh init 17.0.0 usb` to create your mirror files to take onsite.
 
+## Quickstart
+- Login into a Ubuntu 20.04 Server connected to the internet
+- Connect a 4TB USB drive and mount it to /images
+- `wget https://raw.githubusercontent.com/wkonitzer/airgapped-mcc/main/mirror.sh && chmod +x mirror.sh`
+- `sudo -i`
+- `screen`
+- `export AZURE_USER=<azure username>`
+- `export AZURE_PASSWORD=<azure_password>`
+- `./mirror.sh init 17.0.0 usb`
+
+Wait some time for images to download. You can see logs in /tmp/
+- apt_mirror.log
+- download_py.log
+- image_sync_py.log
+- image_sync_upload_py.log
+- installation.log
+
+Once complete, power off the server and disconnect the USB drive.
+
+In your airgapped environment:
+- Select another Ubuntu 20.04 server as you airgapped server
+- Connect the USB drive and mount it to /images
+- run /images/mirrors.sh setup-airgap-server
+
+Now point your MCC/MOSK install at the airgapped server. The proxy CA cert can be found at /images/certs/myCA.crt
+
 ## Steps for Use
 
 ### 1. Copying and Running the Script
