@@ -503,7 +503,7 @@ EOF
     docker run --name "$container_name" -p 80:80 -p 443:443 \
         -v /etc/nginx/conf.d:/etc/nginx/conf.d \
         -v /var/log/nginx:/var/log/nginx \
-        -v /images/certs:/images/certs \
+        -v /images:/images \
         --restart always -d nginx
 
     create_docker_network
