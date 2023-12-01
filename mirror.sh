@@ -1383,50 +1383,45 @@ sync_images() {
     log "Mirror creation complete"
 }
 
+log_error() {
+    log "Error: $1"
+    log "Usage: $0 $2"
+    exit 1
+}
+
+check_version_format() {
+    if ! [[ $1 =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+        log_error "Invalid version format. Version should only contain numbers and dots." "$2"
+    fi
+}
+
+check_month_format() {
+    if [ -n "$1" ] && ! [[ "$1" =~ ^[0-9]+$ ]]; then
+        log_error "Invalid month format. It should only contain numbers." "$2"
+    fi
+}
+
 # Case statement for handling different operations
 case "$1" in
     setup-mirror-server | init)
-        # Check if a version parameter was provided for these cases
-        if [ -z "$2" ]; then
-            log "Error: No release version provided."
-            log "Usage: $0 $1 <release_version>"
-            log "Example: $0 $1 17.0.0"
-            exit 1
-        fi
+        [ -z "$2" ] && log_error "No release version provided." "$0 $1 <release_version> \nExample: $0 $1 17.0.0"
         version="$2"
-
-        # Check if version contains only numbers and dots
-        if ! [[ $version =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
-            log "Error: Invalid version format. Version should only contain numbers and dots."
-            log "Example of valid format: 17.0.0"
-            exit 1
-        fi
-
+        check_version_format "$version" "Example: $0 $1 17.0.0"
         skip_create_lv_flag="$3"
+        [ -n "$3" ] && [ "$3" != "usb" ] && log_error "When provided, the third argument must be 'usb'."
 
-        # Proceed only if the third argument is provided and not equal to 'usb'
-        if [ -n "$3" ] && [ "$3" != "usb" ]; then
-            log "Error: When provided, the third argument must be 'usb'."
-            exit 1
-        fi       
-        
         [ "$1" = "setup-mirror-server" ] && setup_mirror_server
         [ "$1" = "init" ] && { setup_mirror_server; sync_images; }
         ;;
     setup-airgap-server)
         setup_airgap_server
         ;;    
-    download-images)
+    download-images | upload-images | sync-images)
         months="$2"
-        download_images
-        ;;
-    upload-images)
-        months="$2"
-        upload_images
-        ;;
-    sync-images)
-        months="$2"
-        sync_images
+        check_month_format "$months" "$0 $1 <months> \nExample: $0 $1 6"
+        [ "$1" = "download-images" ] && download_images
+        [ "$1" = "upload-images" ] && upload_images
+        [ "$1" = "sync-images" ] && sync_images
         ;;
     *)
         echo -e "$USAGE_MESSAGE"
