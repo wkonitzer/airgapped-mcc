@@ -86,6 +86,7 @@ is_drive_unassigned() {
 
 # Function to create Logical Volume
 create_lv() {
+    log "Starting Logical Volume creation"
     if lv_exists; then
         log "Logical Volume 'images' already exists. Skipping creation."
         return
@@ -1410,8 +1411,8 @@ case "$1" in
         skip_create_lv_flag="$3"
         [ -n "$3" ] && [ "$3" != "usb" ] && log_error "When provided, the third argument must be 'usb'."
 
-        [ "$1" = "setup-mirror-server" ] && setup_mirror_server
-        [ "$1" = "init" ] && { setup_mirror_server; sync_images; }
+        [ "$1" = "setup-mirror-server" ] && setup_mirror_server "$3"
+        [ "$1" = "init" ] && { setup_mirror_server "$3"; sync_images; }
         ;;
     setup-airgap-server)
         setup_airgap_server
