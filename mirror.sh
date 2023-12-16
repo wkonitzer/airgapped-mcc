@@ -1361,6 +1361,8 @@ setup_mirror_server() {
 }
 
 download_images() {
+    local months=$1
+
     remove_custom_hosts_entries
     setup_azure_cli
 
@@ -1369,6 +1371,8 @@ download_images() {
 }
 
 upload_images() {
+    local months=$1
+
     remove_custom_hosts_entries
 
     # swap endpoints /etc/hosts
@@ -1379,8 +1383,10 @@ upload_images() {
 }
 
 sync_images() {
-    download_images
-    upload_images
+    local months=$1
+
+    download_images "$months"
+    upload_images "$months"
     log "Mirror creation complete"
 }
 
@@ -1411,7 +1417,7 @@ case "$1" in
         skip_create_lv_flag="$3"
         [ -n "$3" ] && [ "$3" != "usb" ] && log_error "When provided, the third argument must be 'usb'."
 
-        [ "$1" = "setup-mirror-server" ] && setup_mirror_server "$3"
+        [ "$1" = "setup-mirror-server" ] && setup_mirror_server "$version"
         [ "$1" = "init" ] && { setup_mirror_server "$3"; sync_images; }
         ;;
     setup-airgap-server)
@@ -1420,9 +1426,9 @@ case "$1" in
     download-images | upload-images | sync-images)
         months="$2"
         check_month_format "$months" "$0 $1 <months> \nExample: $0 $1 6"
-        [ "$1" = "download-images" ] && download_images
-        [ "$1" = "upload-images" ] && upload_images
-        [ "$1" = "sync-images" ] && sync_images
+        [ "$1" = "download-images" ] && download_images "$months"
+        [ "$1" = "upload-images" ] && upload_images "$months"
+        [ "$1" = "sync-images" ] && sync_images "$months"
         ;;
     *)
         echo -e "$USAGE_MESSAGE"
