@@ -774,13 +774,15 @@ def sync_image(action, tag, local_digest_tuple, checksums, registry_name):
 def format_time(seconds):
     """Converts time in seconds to a human-readable format of hours, minutes,
     and seconds."""
+    if seconds < 0:
+        return "Calculating..."
     hours = seconds // 3600
     minutes = (seconds % 3600) // 60
     seconds = seconds % 60
     return f"{hours}h:{minutes}m:{seconds}s"
 
 
-def log_progress(total_tasks, completed_tasks, start_time, window_size=10):
+def log_progress(total_tasks, completed_tasks, start_time, max_window_size=10):
     """
     Periodically logs the progress and estimated time remaining for a set of
     tasks being completed.
@@ -820,14 +822,26 @@ def log_progress(total_tasks, completed_tasks, start_time, window_size=10):
 
         # Update task durations list
         if completed_count > 0:
+            latest_duration = elapsed_time / completed_count
             if len(task_durations) >= window_size:
                 task_durations.pop(0)  # Remove oldest duration
-            task_durations.append(elapsed_time / completed_count)
+            task_durations.append(latest_duration)
 
-            # Calculate weighted moving average
-            weighted_avg_duration = sum(task_durations) / len(task_durations)
+            # Adjust the window size based on progress
+            window_size = min(max_window_size, completed_count)
+            recent_durations = sum(task_durations[-window_size:])
+            weighted_avg_duration = recent_durations / window_size
             estimated_total_time = weighted_avg_duration * total_tasks
-            estimated_time_remaining = estimated_total_time - elapsed_time
+            # Prevent negative values
+            estimated_time_remaining = max(estimated_total_time - elapsed_time,
+                                           weighted_avg_duration)
+
+            logging.debug("Elapsed: %s, Window Size: %d, Weighted Avg: %s, "
+                          "Est. Total: %s, Est. Remaining: %s",
+                          format_time(elapsed_time), window_size,
+                          weighted_avg_duration,
+                          format_time(estimated_total_time),
+                          format_time(estimated_time_remaining))
         else:
             estimated_time_remaining = float('inf')  # Infinite initially
 
