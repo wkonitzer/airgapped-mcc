@@ -10,6 +10,7 @@ import threading
 import time
 import argparse
 import requests
+import re
 from urllib.parse import urljoin
 from datetime import datetime, timedelta, timezone
 from dateutil import parser as dateutil_parser
@@ -87,6 +88,9 @@ SPECIFIC_REPOS = ["lcm/socat", "openstack/extra/kubernetes-entrypoint", "stackli
 cutoff_date = datetime.now(timezone.utc) - timedelta(days=args.months * 30)  # Approximate the number of days
 logging.info(f"Cutoff date: {cutoff_date}")
 
+# Global variable
+all_images = []
+
 # Function to get Azure resource group
 def get_resource_group(registry_name):
     logging.info("Trying to determine Azure resource group")
@@ -116,6 +120,9 @@ def process_repository(repo):
             # Check if the manifest has tags
             if "tags" in manifest and manifest["tags"]:
                 tag = manifest["tags"][0]  # Assuming one tag per manifest
+                # Skip tags that end with .sig
+                if tag.endswith('.sig'):
+                    continue
                 digest = manifest["digest"]
                 timestamp = manifest["timestamp"]
 
@@ -282,14 +289,38 @@ def get_remote_docker_images(registry_name):
 # Function to actually fetch Docker images - to be run in a separate thread
 def fetch_docker_images():
     global all_images
-    try:
-        all_images = docker_client.images.list()
-    except KeyboardInterrupt:
-        logging.info("Interrupted while fetching local Docker images.")
-        all_images = []  # Setting to an empty list
-    except Exception as e:
-        logging.error(f"Error fetching local Docker images: {e}")
-        all_images = []
+
+    while True:
+        try:
+            all_images = docker_client.images.list()
+            break  # If successful, exit the loop
+        except KeyboardInterrupt:
+            logging.info("Interrupted while fetching local Docker images.")
+            all_images = []  # Setting to an empty list
+        except Exception as e:
+            error_message = str(e)
+            if "500 Server Error" in error_message and "overlay2: invalid argument" in error_message:
+                # Extract the SHA256 digest from the error message
+                match = re.search(r'sha256:\b[0-9a-f]{64}\b', error_message)
+                if match:
+                    image_digest = match.group(0)
+                    try:
+                        # Delete the problematic image using Docker CLI
+                        docker_client.images.remove(image=image_digest)
+                        logging.info(f"Successfully deleted problematic image with digest {image_digest}")
+                    except Exception as e:
+                        logging.error(f"Error deleting Docker image with digest {image_digest}: {e}")
+                        # If unable to delete the image, exit the loop
+                        break
+                else:
+                    logging.error("SHA256 digest not found in the error message.")
+                    # If SHA256 digest couldn't be found, exit the loop
+                    break
+            else:
+                logging.error(f"Error fetching local Docker images: {e}")
+                all_images = []
+                # For other types of exceptions, exit the loop
+                break
 
 # Function to filter local Docker images by registry
 def get_local_docker_images(registry_name):
