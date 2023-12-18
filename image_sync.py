@@ -823,7 +823,7 @@ def log_progress(total_tasks, completed_tasks, start_time, max_window_size=10):
         # Update task durations list
         if completed_count > 0:
             latest_duration = elapsed_time / completed_count
-            if len(task_durations) >= window_size:
+            if len(task_durations) >= max_window_size:
                 task_durations.pop(0)  # Remove oldest duration
             task_durations.append(latest_duration)
 
