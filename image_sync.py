@@ -39,6 +39,7 @@ import time
 import argparse
 from urllib.parse import urljoin
 from datetime import datetime, timedelta, timezone
+from threading import Lock
 import docker
 import requests
 from dateutil import parser as dateutil_parser
@@ -947,6 +948,7 @@ def process_images(action, registry_name, repo):
         # Set max_workers based on the action
         max_workers = 2 if action == 'push' else args.workers
         completed_tasks = {'count': 0, 'finished': False}
+        count_lock = Lock()  # Lock for thread-safe increment
 
         with concurrent.futures.ThreadPoolExecutor(
                 max_workers) as executor:
@@ -982,7 +984,9 @@ def process_images(action, registry_name, repo):
             for future in concurrent.futures.as_completed(future_to_image):
                 tag = future_to_image[future]
                 future.result()
-                completed_tasks['count'] += 1  # Increment the count of tasks
+                
+                with count_lock:       
+                    completed_tasks['count'] += 1
 
         completed_tasks['finished'] = True  # Signal that all tasks are complete
         log_thread.join()  # Wait for the logging thread to finish
