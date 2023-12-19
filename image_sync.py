@@ -783,6 +783,17 @@ def format_time(seconds):
     return f"{hours}h:{minutes}m:{seconds}s"
 
 
+def calculate_weighted_average(durations, alpha=0.5):
+    """ Calculate exponentially weighted moving average. """
+    if not durations:
+        return 0
+
+    average = durations[0]
+    for duration in durations[1:]:
+        average = alpha * duration + (1 - alpha) * average
+    return average
+
+
 def log_progress(total_tasks, completed_tasks, start_time, max_window_size=10):
     """
     Periodically logs the progress and estimated time remaining for a set of
@@ -815,6 +826,7 @@ def log_progress(total_tasks, completed_tasks, start_time, max_window_size=10):
     completion and the total time elapsed.
     """
     task_durations = []  # List to store the duration of the last few tasks
+    min_significant_duration = 0.1 # seconds, adjust as needed
 
     while not completed_tasks['finished']:
         completed_count = completed_tasks['count']
@@ -824,14 +836,20 @@ def log_progress(total_tasks, completed_tasks, start_time, max_window_size=10):
         # Update task durations list
         if completed_count > 0:
             latest_duration = elapsed_time / completed_count
-            if len(task_durations) >= max_window_size:
-                task_durations.pop(0)  # Remove oldest duration
-            task_durations.append(latest_duration)
+            if latest_duration >= min_significant_duration:
+                if len(task_durations) >= max_window_size:
+                    task_durations.pop(0)  # Remove oldest duration
+                task_durations.append(latest_duration)
 
             # Adjust the window size based on progress
             window_size = min(max_window_size, completed_count)
-            recent_durations = sum(task_durations[-window_size:])
-            weighted_avg_duration = recent_durations / window_size
+            recent_durations = task_durations[-window_size:]
+
+            if isinstance(recent_durations, list) and recent_durations:
+                weighted_avg_duration = calculate_weighted_average(recent_durations)
+            else:
+                weighted_avg_duration = 0  # or some default value
+
             estimated_total_time = weighted_avg_duration * total_tasks
             # Prevent negative values
             estimated_time_remaining = max(estimated_total_time - elapsed_time,
@@ -984,8 +1002,8 @@ def process_images(action, registry_name, repo):
             for future in concurrent.futures.as_completed(future_to_image):
                 tag = future_to_image[future]
                 future.result()
-                
-                with count_lock:       
+
+                with count_lock:
                     completed_tasks['count'] += 1
 
         completed_tasks['finished'] = True  # Signal that all tasks are complete
