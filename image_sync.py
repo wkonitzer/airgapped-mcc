@@ -775,8 +775,14 @@ def sync_image(action, tag, local_digest_tuple, checksums, registry_name,
         return
 
     if local_digest != other_digest:
-        logging.info("%s: Change detected - Local digest: %s, Other digest: %s",
-                     tag, local_digest, other_digest)
+        if action == 'pull':
+            logging.info("%s: Change detected - Other digest: %s, "
+                         "Local digest: %s",
+                         tag, local_digest, other_digest)
+        elif action == 'push':
+            logging.info("%s: Change detected - Local digest: %s, "
+                         "Other digest: %s",
+                         tag, local_digest, other_digest)            
 
         try:
             if action == 'pull':
@@ -809,11 +815,13 @@ def sync_image(action, tag, local_digest_tuple, checksums, registry_name,
 def format_time(seconds):
     """Converts time in seconds to a human-readable format of hours, minutes,
     and seconds."""
-    if seconds < 0:
+    if seconds == float('inf'):
         return "Calculating..."
-    hours = seconds // 3600
-    minutes = (seconds % 3600) // 60
-    seconds = seconds % 60
+    if seconds < 5:
+        return "Calculating..."
+    hours = int(seconds) // 3600
+    minutes = (int(seconds) % 3600) // 60
+    seconds = int(seconds) % 60
     return f"{hours}h:{minutes}m:{seconds}s"
 
 
