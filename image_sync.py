@@ -844,8 +844,8 @@ def calculate_median(durations):
     mid = n // 2
     if n % 2 == 0:
         return (sorted_durations[mid - 1] + sorted_durations[mid]) / 2.0
-    else:
-        return sorted_durations[mid]
+
+    return sorted_durations[mid]
 
 
 def calculate_recent_average_duration(task_durations_queue, max_window_size=10):
@@ -914,7 +914,7 @@ def log_progress(total_tasks, completed_tasks, start_time,
             # Calculate recent average task duration
             recent_avg_duration = calculate_recent_average_duration(
                                       task_durations, max_window_size
-                                  )           
+                                  )
 
             if recent_durations:
                 weighted_avg_duration = calculate_weighted_average(recent_durations)
@@ -928,17 +928,17 @@ def log_progress(total_tasks, completed_tasks, start_time,
             logging.debug("Weighted Avg Duration: %s, Median Avg Duration: %s, "
                            "Moving Avg Duration: %s, Recent Avg Duration: %s",
                            weighted_avg_duration, median_avg_duration,
-                           moving_avg_duration, recent_avg_duration)    
+                           moving_avg_duration, recent_avg_duration)
 
             # Choose the lowest among the calculated averages
             min_avg_duration = min(weighted_avg_duration, median_avg_duration,
-                                   moving_avg_duration, recent_avg_duration)                
+                                   moving_avg_duration, recent_avg_duration)
 
             tasks_remaining = total_tasks - completed_count
             #estimated_time_remaining = weighted_avg_duration * tasks_remaining
 
             # Estimate time to complete remaining tasks
-            estimated_time_for_remaining_tasks = tasks_remaining * recent_avg_duration             
+            estimated_time_for_remaining_tasks = tasks_remaining * recent_avg_duration
 
             # Estimate total remaining time based on the faster of the two
             # rates: historical or recent
