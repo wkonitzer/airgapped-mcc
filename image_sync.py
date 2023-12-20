@@ -756,7 +756,8 @@ def sync_image(action, tag, local_digest_tuple, checksums, registry_name,
 
     # Check if the tag matches the expected tag from the queue
     if tag != tag_from_queue:
-        logging.error("Tag mismatch: expected %s, got %s", tag_from_queue, tag)
+        logging.warning("Tag mismatch: expected %s, got %s", tag_from_queue,
+                        tag)
         return
 
     if action == 'pull':
@@ -782,7 +783,7 @@ def sync_image(action, tag, local_digest_tuple, checksums, registry_name,
         elif action == 'push':
             logging.info("%s: Change detected - Local digest: %s, "
                          "Other digest: %s",
-                         tag, local_digest, other_digest)            
+                         tag, local_digest, other_digest)
 
         try:
             if action == 'pull':
