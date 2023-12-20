@@ -27,7 +27,6 @@ Requires:
 - Proper access rights to the Azure Container Registry.
 """
 import os
-import socket
 import sys
 import subprocess
 import json
@@ -215,6 +214,9 @@ SPECIFIC_REPOS = ["lcm/socat",
 # Cutoff date to not download all repos with approx number of days.
 cutoff_date = datetime.now(timezone.utc) - timedelta(days=args.months * 30)
 logging.info("Cutoff date: %s", cutoff_date)
+
+# This queue will store the durations of completed tasks
+task_durations_queue_global = queue.Queue()
 
 
 def get_resource_group(registry_name):
@@ -728,7 +730,8 @@ def get_local_docker_images(registry_name):
         return {}
 
 
-def sync_image(action, tag, local_digest_tuple, checksums, registry_name):
+def sync_image(action, tag, local_digest_tuple, checksums, registry_name,
+               task_start_times, task_durations_queue):
     """
     Synchronizes a Docker image by either pulling or pushing, based on the 
     action specified. This is determined by comparing the local digest with 
@@ -747,6 +750,15 @@ def sync_image(action, tag, local_digest_tuple, checksums, registry_name):
     - Assumes 'docker_client' is defined externally.
     - Skips images with complex tag structures (more than one colon).
     """
+
+    # Retrieve the start time from the queue
+    tag_from_queue, start_time = task_start_times.get()
+
+    # Check if the tag matches the expected tag from the queue
+    if tag != tag_from_queue:
+        logging.error("Tag mismatch: expected %s, got %s", tag_from_queue, tag)
+        return
+
     if action == 'pull':
         local_digest = local_digest_tuple
         other_digest = checksums.get(tag, (None,))[0]
@@ -759,6 +771,7 @@ def sync_image(action, tag, local_digest_tuple, checksums, registry_name):
 
     if tag.count(':') > 1:
         logging.warning("Skipping image with complex tag structure: %s", tag)
+        task_durations_queue.put(0)  # Indicate skipped task with a nominal duration
         return
 
     if local_digest != other_digest:
@@ -786,6 +799,12 @@ def sync_image(action, tag, local_digest_tuple, checksums, registry_name):
     else:
         logging.debug("%s: No change detected", tag)
 
+    # Calculate and log the duration at the end of the task
+    end_time = time.time()
+    duration = end_time - start_time
+    logging.info("%s: Task completed in %.2f seconds", tag, duration)
+    task_durations_queue.put(duration)
+
 
 def format_time(seconds):
     """Converts time in seconds to a human-readable format of hours, minutes,
@@ -809,7 +828,8 @@ def calculate_weighted_average(durations, alpha=0.5):
     return average
 
 
-def log_progress(total_tasks, completed_tasks, start_time, max_window_size=10):
+def log_progress(total_tasks, completed_tasks, start_time,
+                 task_durations_queue, max_window_size=10):
     """
     Periodically logs the progress and estimated time remaining for a set of
     tasks being completed.
@@ -828,9 +848,10 @@ def log_progress(total_tasks, completed_tasks, start_time, max_window_size=10):
                                completed.
         start_time (float): The start time of the task processing, as a
                             timestamp.
-        window_size (int, optional): The number of most recent tasks to consider
-                                     for calculating the weighted moving average
-                                     of task durations. Defaults to 10.
+        task_durations_queue (Queue): A queue to store task durations.
+        max_window_size (int, optional): The number of most recent tasks to consider
+                                         for calculating the weighted moving average
+                                         of task durations. Defaults to 10.
 
     The function logs a progress update every 10 seconds in the format:
     "PROCESSED X/Y ITEMS (Z%), ESTIMATED TIME REMAINING: HH:MM:SS", where X is
@@ -849,26 +870,26 @@ def log_progress(total_tasks, completed_tasks, start_time, max_window_size=10):
         elapsed_time = current_time - start_time
 
         # Update task durations list
-        if completed_count > 0:
-            latest_duration = elapsed_time / completed_count
-            if latest_duration >= min_significant_duration:
+        while not task_durations_queue.empty():
+            task_duration = task_durations_queue.get()
+            if task_duration >= min_significant_duration:
                 if len(task_durations) >= max_window_size:
                     task_durations.pop(0)  # Remove oldest duration
-                task_durations.append(latest_duration)
+                task_durations.append(task_duration)
 
+        if completed_count > 0:
             # Adjust the window size based on progress
             window_size = min(max_window_size, completed_count)
             recent_durations = task_durations[-window_size:]
 
-            if isinstance(recent_durations, list) and recent_durations:
+            if recent_durations:
                 weighted_avg_duration = calculate_weighted_average(recent_durations)
             else:
                 weighted_avg_duration = 0  # or some default value
 
             estimated_total_time = weighted_avg_duration * total_tasks
             # Prevent negative values
-            estimated_time_remaining = max(estimated_total_time - elapsed_time,
-                                           weighted_avg_duration)
+            estimated_time_remaining = max(estimated_total_time - elapsed_time, 0)
 
             logging.debug("Elapsed: %s, Window Size: %d, Weighted Avg: %s, "
                           "Est. Total: %s, Est. Remaining: %s",
@@ -983,33 +1004,49 @@ def process_images(action, registry_name, repo):
         completed_tasks = {'count': 0, 'finished': False}
         count_lock = Lock()  # Lock for thread-safe increment
 
+        # Initialize the queue for task start times
+        task_start_times = queue.Queue()
+
         with concurrent.futures.ThreadPoolExecutor(
                 max_workers) as executor:
-            # Start the progress logging in a separate thread
+
+            # Initialize the dictionary for pending futures
+            pending_futures = {}
+
             start_time = time.time()
+
             if action == 'push':
                 total_tasks = len(local_checksums)
             else:
                 total_tasks = len(remote_checksums)
 
+            # Start the progress logging in a separate thread
             log_thread = threading.Thread(target=log_progress,
                                           args=(total_tasks, completed_tasks,
-                                                start_time))
+                                                start_time, task_durations_queue_global))
             log_thread.start()
 
-            # Create a dictionary to keep track of pending futures
+            # Submitting tasks to the executor and recording their start times
             if action == 'pull':
-                pending_futures = {
-                    executor.submit(sync_image, 'pull', remote_tag, remote_digest,
-                                    local_checksums, AZURE_REGISTRY_NAME): remote_tag
-                    for remote_tag, remote_digest in remote_checksums.items()
-                }
+                for remote_tag, remote_digest in remote_checksums.items():
+                    start_time = time.time()
+                    task_start_times.put((remote_tag, start_time))
+                    future = executor.submit(sync_image, 'pull', remote_tag,
+                                             remote_digest, local_checksums,
+                                             AZURE_REGISTRY_NAME,
+                                             task_start_times,
+                                             task_durations_queue_global)
+                    pending_futures[future] = remote_tag
             else:  # action == 'push'
-                pending_futures = {
-                    executor.submit(sync_image, 'push', local_tag, local_digest,
-                                    remote_checksums, AZURE_REGISTRY_NAME): local_tag
-                    for local_tag, local_digest in local_checksums.items()
-                }
+                for local_tag, local_digest in local_checksums.items():
+                    start_time = time.time()
+                    task_start_times.put((local_tag, start_time))
+                    future = executor.submit(sync_image, 'push', local_tag,
+                                             local_digest, remote_checksums,
+                                             AZURE_REGISTRY_NAME,
+                                             task_start_times,
+                                             task_durations_queue_global)
+                    pending_futures[future] = local_tag
 
             # Non-blocking approach to handle futures
             while pending_futures:
