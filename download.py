@@ -92,7 +92,7 @@ options.add_argument('--headless')
 options.add_argument('--no-sandbox')
 options.add_argument('--disable-dev-shm-usage')
 driver = webdriver.Chrome(options=options)
-wait = WebDriverWait(driver, 10)
+wait = WebDriverWait(driver, 30)
 
 
 def download_file(url, local_path):
@@ -116,7 +116,7 @@ def download_file(url, local_path):
     logging.debug("Examining %s", url)
     try:
         # Using HEAD request to get the headers without downloading the file
-        response = requests.head(url, timeout=10)
+        response = requests.head(url, timeout=30)
         if response.status_code == 200:
             content_length = int(response.headers.get('Content-Length', 0))
 
@@ -130,7 +130,7 @@ def download_file(url, local_path):
 
             # Download the file if it doesn’t exist or sizes don’t match
             logging.info("Attempting to download %s to %s", url, local_path)
-            response = requests.get(url, stream=True, timeout=10)
+            response = requests.get(url, stream=True, timeout=30)
             response.raise_for_status()
 
             os.makedirs(os.path.dirname(local_path), exist_ok=True)
