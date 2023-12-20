@@ -841,7 +841,7 @@ def log_progress(total_tasks, completed_tasks, start_time, max_window_size=10):
     completion and the total time elapsed.
     """
     task_durations = []  # List to store the duration of the last few tasks
-    min_significant_duration = 0.1 # seconds, adjust as needed
+    min_significant_duration = 1.0 # seconds, adjust as needed
 
     while not completed_tasks['finished']:
         completed_count = completed_tasks['count']
@@ -1013,10 +1013,12 @@ def process_images(action, registry_name, repo):
 
             # Non-blocking approach to handle futures
             while pending_futures:
+                logging.info("Main loop iteration with %d pending futures", len(pending_futures))
                 for future in list(pending_futures):
                     tag = pending_futures[future]
 
                     if future.done():
+                        logging.info("Processing completed future for tag %s", tag)
                         try:
                             result = future.result()
                             logging.info("Task for %s completed successfully "
@@ -1032,7 +1034,10 @@ def process_images(action, registry_name, repo):
                             logging.info("Main thread - incremented count to "
                                          "%d", completed_tasks['count'])
 
-                    time.sleep(0.1)  # Prevent high CPU usage
+                    time.sleep(0.01)  # Prevent high CPU usage
+
+                if not pending_futures:
+                    logging.info("All futures processed, exiting main loop")
 
         completed_tasks['finished'] = True  # Signal that all tasks are complete
         log_thread.join()  # Wait for the logging thread to finish
