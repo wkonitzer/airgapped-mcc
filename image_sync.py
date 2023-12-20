@@ -608,7 +608,7 @@ def fetch_docker_images():
         except KeyboardInterrupt:
             logging.info("Interrupted while fetching local Docker images.")
             return []  # Setting to an empty list
-        except socket.timeout:
+        except requests.exceptions.ReadTimeout:
             logging.warning("Socket timeout occured. Attempt %d of %d",
                             attempt + 1, max_retries)
             if attempt < max_retries:
