@@ -27,6 +27,7 @@ Requires:
 - Proper access rights to the Azure Container Registry.
 """
 import os
+import socket
 import sys
 import subprocess
 import json
@@ -597,12 +598,26 @@ def fetch_docker_images():
     Note:
     Logs errors or interruptions during the image fetching process.
     """
+    max_retries = 5
+    retry_delay = 5
+    attempt = 0
+
     while True:
         try:
             return docker_client.images.list()
         except KeyboardInterrupt:
             logging.info("Interrupted while fetching local Docker images.")
             return []  # Setting to an empty list
+        except socket.timeout:
+            logging.warning("Socket timeout occured. Attempt %d of %d",
+                            attempt + 1, max_retries)
+            if attempt < max_retries:
+                time.sleep(retry_delay)
+                continue
+
+            logging.error("Max retries reached for socket timeout. "
+                              "Exiting function.")
+            return []
         except docker.errors.APIError as error:
             error_message = str(error)
             if ("500 Server Error" in error_message and
@@ -982,29 +997,42 @@ def process_images(action, registry_name, repo):
                                                 start_time))
             log_thread.start()
 
+            # Create a dictionary to keep track of pending futures
             if action == 'pull':
-                future_to_image = {
-                    executor.submit(
-                        sync_image, 'pull', remote_tag, remote_digest,
-                        local_checksums, AZURE_REGISTRY_NAME
-                    ): remote_tag
+                pending_futures = {
+                    executor.submit(sync_image, 'pull', remote_tag, remote_digest,
+                                    local_checksums, AZURE_REGISTRY_NAME): remote_tag
                     for remote_tag, remote_digest in remote_checksums.items()
                 }
             else:  # action == 'push'
-                future_to_image = {
-                    executor.submit(
-                        sync_image, 'push', local_tag, local_digest,
-                        remote_checksums, AZURE_REGISTRY_NAME
-                    ): local_tag
+                pending_futures = {
+                    executor.submit(sync_image, 'push', local_tag, local_digest,
+                                    remote_checksums, AZURE_REGISTRY_NAME): local_tag
                     for local_tag, local_digest in local_checksums.items()
                 }
 
-            for future in concurrent.futures.as_completed(future_to_image):
-                tag = future_to_image[future]
-                future.result()
+            # Non-blocking approach to handle futures
+            while pending_futures:
+                for future in list(pending_futures):
+                    tag = pending_futures[future]
 
-                with count_lock:
-                    completed_tasks['count'] += 1
+                    if future.done():
+                        try:
+                            result = future.result()
+                            logging.info("Task for %s completed successfully "
+                                          "with result: %s", tag, result)
+                        except Exception as e:
+                            logging.error("Task for %s encountered an "
+                                          "exception: %s", tag, e)
+
+                        del pending_futures[future]
+
+                        with count_lock:
+                            completed_tasks['count'] += 1
+                            logging.info("Main thread - incremented count to "
+                                         "%d", completed_tasks['count'])
+
+                    time.sleep(0.1)  # Prevent high CPU usage
 
         completed_tasks['finished'] = True  # Signal that all tasks are complete
         log_thread.join()  # Wait for the logging thread to finish
