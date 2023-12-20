@@ -802,7 +802,7 @@ def sync_image(action, tag, local_digest_tuple, checksums, registry_name,
     # Calculate and log the duration at the end of the task
     end_time = time.time()
     duration = end_time - start_time
-    logging.info("%s: Task completed in %.2f seconds", tag, duration)
+    logging.debug("%s: Task completed in %.2f seconds", tag, duration)
     task_durations_queue.put(duration)
 
 
@@ -817,7 +817,7 @@ def format_time(seconds):
     return f"{hours}h:{minutes}m:{seconds}s"
 
 
-def calculate_weighted_average(durations, alpha=0.5):
+def calculate_weighted_average(durations, alpha=0.2):
     """ Calculate exponentially weighted moving average. """
     if not durations:
         return 0
@@ -826,6 +826,32 @@ def calculate_weighted_average(durations, alpha=0.5):
     for duration in durations[1:]:
         average = alpha * duration + (1 - alpha) * average
     return average
+
+
+def calculate_simple_moving_average(durations):
+    """ Calculate moving average. """
+    if not durations:
+        return 0
+    return sum(durations) / len(durations)
+
+
+def calculate_median(durations):
+    """ Calculate median average. """
+    if not durations:
+        return 0
+    sorted_durations = sorted(durations)
+    n = len(sorted_durations)
+    mid = n // 2
+    if n % 2 == 0:
+        return (sorted_durations[mid - 1] + sorted_durations[mid]) / 2.0
+    else:
+        return sorted_durations[mid]
+
+
+def calculate_recent_average_duration(task_durations_queue, max_window_size=10):
+    """ Calculate recent task duration. """
+    recent_durations = list(task_durations_queue)[-max_window_size:]
+    return sum(recent_durations) / len(recent_durations) if recent_durations else 0
 
 
 def log_progress(total_tasks, completed_tasks, start_time,
@@ -882,21 +908,53 @@ def log_progress(total_tasks, completed_tasks, start_time,
             window_size = min(max_window_size, completed_count)
             recent_durations = task_durations[-window_size:]
 
+            # Calculate average completion rate (tasks per second)
+            completion_rate = completed_count / elapsed_time
+
+            # Calculate recent average task duration
+            recent_avg_duration = calculate_recent_average_duration(
+                                      task_durations, max_window_size
+                                  )           
+
             if recent_durations:
                 weighted_avg_duration = calculate_weighted_average(recent_durations)
+                median_avg_duration = calculate_median(recent_durations)
+                moving_avg_duration = calculate_simple_moving_average(recent_durations)
             else:
                 weighted_avg_duration = 0  # or some default value
+                median_avg_duration = 0
+                moving_avg_duration = 0
 
-            estimated_total_time = weighted_avg_duration * total_tasks
+            logging.debug("Weighted Avg Duration: %s, Median Avg Duration: %s, "
+                           "Moving Avg Duration: %s, Recent Avg Duration: %s",
+                           weighted_avg_duration, median_avg_duration,
+                           moving_avg_duration, recent_avg_duration)    
+
+            # Choose the lowest among the calculated averages
+            min_avg_duration = min(weighted_avg_duration, median_avg_duration,
+                                   moving_avg_duration, recent_avg_duration)                
+
+            tasks_remaining = total_tasks - completed_count
+            #estimated_time_remaining = weighted_avg_duration * tasks_remaining
+
+            # Estimate time to complete remaining tasks
+            estimated_time_for_remaining_tasks = tasks_remaining * recent_avg_duration             
+
+            # Estimate total remaining time based on the faster of the two
+            # rates: historical or recent
+            estimated_time_remaining = min(estimated_time_for_remaining_tasks,
+                                           tasks_remaining / completion_rate)
+
             # Prevent negative values
-            estimated_time_remaining = max(estimated_total_time - elapsed_time, 0)
+            estimated_time_remaining = max(estimated_time_remaining, 0)
 
-            logging.debug("Elapsed: %s, Window Size: %d, Weighted Avg: %s, "
-                          "Est. Total: %s, Est. Remaining: %s",
-                          format_time(elapsed_time), window_size,
-                          weighted_avg_duration,
-                          format_time(estimated_total_time),
-                          format_time(estimated_time_remaining))
+            logging.debug("Elapsed: %s, Completion Rate: %.2f, Window Size: %d, "
+                         "Min Avg duration: %s, Est. Remaining: %s, "
+                         "Completed Count: %d",
+                          format_time(elapsed_time), completion_rate,
+                          window_size, min_avg_duration,
+                          format_time(estimated_time_remaining),
+                          completed_count)
         else:
             estimated_time_remaining = float('inf')  # Infinite initially
 
@@ -1050,31 +1108,27 @@ def process_images(action, registry_name, repo):
 
             # Non-blocking approach to handle futures
             while pending_futures:
-                logging.info("Main loop iteration with %d pending futures", len(pending_futures))
+                logging.debug("Main loop iteration with %d pending futures", len(pending_futures))
                 for future in list(pending_futures):
                     tag = pending_futures[future]
 
                     if future.done():
-                        logging.info("Processing completed future for tag %s", tag)
-                        try:
-                            result = future.result()
-                            logging.info("Task for %s completed successfully "
-                                          "with result: %s", tag, result)
-                        except Exception as e:
-                            logging.error("Task for %s encountered an "
-                                          "exception: %s", tag, e)
+                        logging.debug("Processing completed future for tag %s", tag)
+                        result = future.result()
+                        logging.debug("Task for %s completed successfully "
+                                      "with result: %s", tag, result)
 
                         del pending_futures[future]
 
                         with count_lock:
                             completed_tasks['count'] += 1
-                            logging.info("Main thread - incremented count to "
+                            logging.debug("Main thread - incremented count to "
                                          "%d", completed_tasks['count'])
 
                     time.sleep(0.01)  # Prevent high CPU usage
 
                 if not pending_futures:
-                    logging.info("All futures processed, exiting main loop")
+                    logging.debug("All futures processed, exiting main loop")
 
         completed_tasks['finished'] = True  # Signal that all tasks are complete
         log_thread.join()  # Wait for the logging thread to finish
