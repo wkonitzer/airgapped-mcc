@@ -1445,7 +1445,7 @@ case "$1" in
         skip_create_lv_flag="$3"
         [ -n "$3" ] && [ "$3" != "usb" ] && log_error "When provided, the third argument must be 'usb'."
 
-        [ "$1" = "setup-mirror-server" ] && setup_mirror_server "$version"
+        [ "$1" = "setup-mirror-server" ] && setup_mirror_server "$3"
         [ "$1" = "init" ] && { setup_mirror_server "$3"; sync_images; }
         ;;
     setup-airgap-server)
