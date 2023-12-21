@@ -150,8 +150,13 @@ setup_dnsmasq() {
     log "Primary IP Address: $primary_ip"
 
     if [ -z "$primary_ip" ]; then
-        log "Could not determine the primary IP address. Please check network configuration."
-        return 1
+        log "Could not determine the primary IP address. Trying alternative method"
+        primary_ip=$(ip -4 addr show scope global | awk '/inet/ {print $2}' | cut -d/ -f1 | head -n1)
+
+        if [ -z "$primary_ip" ]; then
+            log "Could not determine the primary IP address. Please check network configuration."
+            return 1
+        fi
     fi
 
     # Check if the airgapserver flag is set
@@ -1143,6 +1148,21 @@ download_package() {
     popd > /dev/null
 }
 
+download_packages() {
+
+    DOWNLOAD_DIR="$IMAGES_DIR/downloaded_packages"
+    pushd "$DOWNLOAD_DIR" > /dev/null
+
+    # Download each URL passed to the function
+    for url in "$@"
+    do
+        log "Downloading $url"
+        wget "$url"
+    done
+
+    popd > /dev/null
+}
+
 create_client_install() {
     log "Creating airgapped-server install files"
 
@@ -1159,7 +1179,15 @@ create_client_install() {
 
     # Download dnsmasq and its dependencies
     log "Downloading dnsmasq"
-    download_package "dnsmasq" "$DOWNLOAD_DIR"       
+    download_package "dnsmasq" "$DOWNLOAD_DIR"
+
+    # Download additional packages
+    download_packages \
+    "http://us.archive.ubuntu.com/ubuntu/pool/main/i/iptables/iptables_1.8.4-3ubuntu2.1_amd64.deb" \
+    "http://us.archive.ubuntu.com/ubuntu/pool/main/i/iptables/libip6tc2_1.8.4-3ubuntu2.1_amd64.deb" \
+    "http://us.archive.ubuntu.com/ubuntu/pool/main/s/systemd/libnss-systemd_245.4-4ubuntu3.22_amd64.deb" \
+    "http://us.archive.ubuntu.com/ubuntu/pool/main/s/systemd/libpam-systemd_245.4-4ubuntu3.22_amd64.deb" \
+    "http://us.archive.ubuntu.com/ubuntu/pool/main/s/systemd/udev_245.4-4ubuntu3.22_amd64.deb"
 
     log "All packages downloaded to $DOWNLOAD_DIR" 
 
