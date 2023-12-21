@@ -277,10 +277,6 @@ def process_repository(registry_name, repo):
         for manifest in manifests:
             # Check if the manifest has tags
             if "tags" in manifest and manifest["tags"]:
-                tag = manifest["tags"][0]  # Assuming one tag per manifest
-                # Skip tags that end with .sig
-                if tag.endswith('.sig'):
-                    continue
                 digest = manifest["digest"]
                 timestamp = manifest["timestamp"]
 
@@ -291,11 +287,18 @@ def process_repository(registry_name, repo):
                         # Assume UTC
                         parsed_timestamp = parsed_timestamp.replace(
                                                             tzinfo=timezone.utc)
-                    if repo in SPECIFIC_REPOS or parsed_timestamp > cutoff_date:
-                        formatted_tag = f"{repo}:{tag}"
-                        azure_checksums[formatted_tag] = digest
-                        logging.debug("Azure image: %s, Digest: %s",
-                                      formatted_tag, digest)
+
+                    # Process each tag in the manifest
+                    for tag in manifest["tags"]:
+                        # Skip tags that end with .sig
+                        if tag.endswith('.sig'):
+                            continue                        
+                            
+                        if repo in SPECIFIC_REPOS or parsed_timestamp > cutoff_date:
+                            formatted_tag = f"{repo}:{tag}"
+                            azure_checksums[formatted_tag] = digest
+                            logging.debug("Azure image: %s, Digest: %s",
+                                          formatted_tag, digest)
 
                 except ValueError as timestamp_error:
                     logging.error("Error parsing timestamp for %s:%s: %s",
