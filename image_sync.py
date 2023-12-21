@@ -40,6 +40,7 @@ import argparse
 from urllib.parse import urljoin
 from datetime import datetime, timedelta, timezone
 from threading import Lock
+from urllib3.exceptions import ReadTimeoutError
 import docker
 import requests
 from dateutil import parser as dateutil_parser
@@ -292,8 +293,8 @@ def process_repository(registry_name, repo):
                     for tag in manifest["tags"]:
                         # Skip tags that end with .sig
                         if tag.endswith('.sig'):
-                            continue                        
-                            
+                            continue
+
                         if repo in SPECIFIC_REPOS or parsed_timestamp > cutoff_date:
                             formatted_tag = f"{repo}:{tag}"
                             azure_checksums[formatted_tag] = digest
@@ -753,6 +754,10 @@ def sync_image(action, tag, local_digest_tuple, checksums, registry_name,
     - Assumes 'docker_client' is defined externally.
     - Skips images with complex tag structures (more than one colon).
     """
+    max_retries = 5
+    retry_delay = 2
+
+    success = False  # Indicator for successful operation
 
     # Retrieve the start time from the queue
     tag_from_queue, start_time = task_start_times.get()
@@ -788,24 +793,37 @@ def sync_image(action, tag, local_digest_tuple, checksums, registry_name,
                          "Other digest: %s",
                          tag, local_digest, other_digest)
 
-        try:
-            if action == 'pull':
-                docker_client.images.pull(full_image_path)
-                logging.info("Successfully pulled image: %s", full_image_path)
-            elif action == 'push':
-                response = docker_client.api.push(full_image_path,
-                                                  stream=True, decode=True)
-                for line in response:
-                    logging.debug("%s: %s", tag, line)
-                logging.info("%s: Successfully pushed image", tag)
-            else:
+        for attempt in range(max_retries):
+            try:
+                if action == 'pull':
+                    docker_client.images.pull(full_image_path)
+                    logging.info("Successfully pulled image: %s", full_image_path)
+                    success = True
+                    break
+                if action == 'push':
+                    response = docker_client.api.push(full_image_path,
+                                                      stream=True, decode=True)
+                    for line in response:
+                        logging.debug("%s: %s", tag, line)
+                    logging.info("%s: Successfully pushed image", tag)
+                    success = True
+                    break
                 raise ValueError(f"Unknown action: {action}")
-        except docker.errors.ImageNotFound as not_found_error:
-            logging.error("Image not found %s: %s",
-                          full_image_path, not_found_error)
-        except docker.errors.APIError as image_api_error:
-            logging.error("Docker API error %sing image %s: %s",
-                          action, full_image_path, image_api_error)
+            except docker.errors.ImageNotFound as not_found_error:
+                logging.error("Image not found %s: %s",
+                              full_image_path, not_found_error)
+                break
+            except (docker.errors.APIError, ReadTimeoutError) as image_api_error:
+                logging.warning("Error on attempt %d for %s: %s", attempt + 1,
+                                action, image_api_error)
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                continue
+
+        if not success:
+            logging.error("Failed to %s image after %d attempts: %s", action,
+                          max_retries, full_image_path)        
+
     else:
         logging.debug("%s: No change detected", tag)
 
