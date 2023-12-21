@@ -1157,7 +1157,7 @@ download_packages() {
     for url in "$@"
     do
         log "Downloading $url"
-        wget "$url"
+        wget --no-clobber --timestamping "$url"
     done
 
     popd > /dev/null
