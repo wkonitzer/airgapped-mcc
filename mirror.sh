@@ -1220,6 +1220,10 @@ install_downloaded_packages() {
         return 1
     fi
 
+    # Do pre-install
+    log "Performing pre-install"
+    dpkg -i *
+
     # Loop through all .deb files and install them
     for pkg in *.deb; do
         # Extract package name from .deb file
