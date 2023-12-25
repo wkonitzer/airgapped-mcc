@@ -479,8 +479,9 @@ server {
         proxy_set_header X-Forwarded-Proto \$scheme;
 
         # Ensure large buffers for Docker image layers
-        proxy_buffers 32 16k;
-        proxy_buffer_size 32k;
+        proxy_buffers 64 128k;
+        proxy_buffer_size 64k;
+        proxy_busy_buffers_size 256k;
     }
 }
 EOF
