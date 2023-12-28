@@ -213,7 +213,9 @@ SPECIFIC_REPOS = ["lcm/socat",
                   "openstack/extra/coredns"]
 
 # Cutoff date to not download all repos with approx number of days.
-cutoff_date = datetime.now(timezone.utc) - timedelta(days=args.months * 30)
+additional_months = 1 if args.mode == 'upload' else 0
+cutoff_date = datetime.now(timezone.utc) - timedelta(
+                                    days=(args.months + additional_months) * 30)
 logging.info("Cutoff date: %s", cutoff_date)
 
 # This queue will store the durations of completed tasks
