@@ -761,7 +761,7 @@ build_tinyproxy() {
     ./autogen.sh && ./configure && make
     if [ $? -eq 0 ]; then
         make install
-        cp /usr/local/bin/tinyproxy /images/downloaded_packages/
+        cp /usr/local/bin/tinyproxy /images/other_packages/
         popd
     else
         log "Build failed"
@@ -777,10 +777,10 @@ fix_tinyproxy() {
     systemctl stop tinyproxy
 
     # Check if the new binary exists
-    if [ -f "/images/downloaded_packages/tinyproxy" ]; then
+    if [ -f "/images/other_packages/tinyproxy" ]; then
 
         # Replace the binary
-        cp /images/downloaded_packages/tinyproxy /usr/bin/tinyproxy
+        cp /images/other_packages/tinyproxy /usr/bin/tinyproxy
     else
         log "New Tinyproxy binary not found."
         return 1
