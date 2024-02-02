@@ -757,6 +757,7 @@ build_tinyproxy() {
     fi
 
     # Build and install Tinyproxy
+    mkdir -p /images/other_packages/
     pushd tinyproxy
     ./autogen.sh && ./configure && make
     if [ $? -eq 0 ]; then
